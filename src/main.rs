@@ -7,7 +7,8 @@ use microbit::Board;
 
 use panic_halt as _;
 
-mod raw_led;
+mod app;
+mod raw;
 
 #[entry]
 fn main() -> ! {

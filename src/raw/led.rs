@@ -13,7 +13,7 @@ use microbit::{
 type Led = Pin<Output<PushPull>>;
 
 #[allow(unused)]
-pub fn raw_led_demo(mut board: Board) -> ! {
+pub fn raw_demo(mut board: Board) -> ! {
   let mut timer = Timer::new(board.TIMER0);
   loop {
     board.display_pins.row1.set_high().unwrap();
@@ -35,7 +35,7 @@ pub fn raw_led_demo(mut board: Board) -> ! {
 }
 
 #[allow(unused)]
-pub fn led_demo(board: Board) {
+pub fn light_up_demo(board: Board) {
   light_up(
     1000,
     &mut Timer::new(board.TIMER0),
