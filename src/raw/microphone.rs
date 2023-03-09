@@ -30,7 +30,11 @@ impl Microphone {
   }
 
   pub fn read(&mut self) -> u16 {
-    self.saadc.read(&mut self.mic_in).unwrap_or_default() as u16
+    self
+      .saadc
+      .read(&mut self.mic_in)
+      .unwrap_or_default()
+      .unsigned_abs()
   }
 
   pub fn sample(&mut self, n: usize) -> u16 {
