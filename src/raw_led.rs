@@ -8,8 +8,9 @@ use microbit::{
   Board,
 };
 
-type LED = Pin<Output<PushPull>>;
+type Led = Pin<Output<PushPull>>;
 
+#[allow(unused)]
 pub fn raw_led_demo(mut board: Board) -> ! {
   let mut timer = Timer::new(board.TIMER0);
   loop {
@@ -31,6 +32,7 @@ pub fn raw_led_demo(mut board: Board) -> ! {
   }
 }
 
+#[allow(unused)]
 pub fn led_demo(board: Board) -> ! {
   light_up(
     board,
@@ -44,6 +46,7 @@ pub fn led_demo(board: Board) -> ! {
   );
 }
 
+#[allow(unused)]
 pub fn light_up(board: Board, matrix: [[u8; 5]; 5]) -> ! {
   let mut timer = Timer::new(board.TIMER0);
   let (mut col_pins, mut row_pins) = board.display_pins.degrade();
@@ -64,8 +67,8 @@ pub fn light_up(board: Board, matrix: [[u8; 5]; 5]) -> ! {
 fn light_up_row<T: Instance, U>(
   light_up_cycle: u32,
   timer: &mut Timer<T, U>,
-  row_pin: &mut LED,
-  col_pins: &mut [LED; 5],
+  row_pin: &mut Led,
+  col_pins: &mut [Led; 5],
   row: &[u8; 5],
 ) {
   row_pin.set_high().unwrap();
