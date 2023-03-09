@@ -1,7 +1,9 @@
 use microbit::{
+  gpio::DisplayPins,
   hal::{
     gpio::{Output, Pin, PushPull},
     prelude::OutputPin,
+    prelude::_embedded_hal_blocking_delay_DelayUs,
     timer::Instance,
     Timer,
   },
@@ -33,9 +35,11 @@ pub fn raw_led_demo(mut board: Board) -> ! {
 }
 
 #[allow(unused)]
-pub fn led_demo(board: Board) -> ! {
+pub fn led_demo(board: Board) {
   light_up(
-    board,
+    1000,
+    &mut Timer::new(board.TIMER0),
+    board.display_pins,
     [
       [1, 0, 1, 0, 1],
       [0, 1, 0, 1, 0],
@@ -47,15 +51,22 @@ pub fn led_demo(board: Board) -> ! {
 }
 
 #[allow(unused)]
-pub fn light_up(board: Board, matrix: [[u8; 5]; 5]) -> ! {
-  let mut timer = Timer::new(board.TIMER0);
-  let (mut col_pins, mut row_pins) = board.display_pins.degrade();
+pub fn light_up<T: Instance>(
+  ms: u32,
+  timer: &mut Timer<T>,
+  display_pins: DisplayPins,
+  matrix: [[u8; 5]; 5],
+) {
+  const ROW_LIGHT_UP_US: u32 = 50;
+  const ALL_LIGHT_UP_US: u32 = ROW_LIGHT_UP_US * 5;
 
-  loop {
+  let (mut col_pins, mut row_pins) = display_pins.degrade();
+
+  for _ in 0..(ms * 1000 / ALL_LIGHT_UP_US) {
     for r in 0..5 {
       light_up_row(
-        500,
-        &mut timer,
+        ROW_LIGHT_UP_US,
+        timer,
         &mut row_pins[r],
         &mut col_pins,
         &matrix[r],
@@ -64,9 +75,9 @@ pub fn light_up(board: Board, matrix: [[u8; 5]; 5]) -> ! {
   }
 }
 
-fn light_up_row<T: Instance, U>(
-  light_up_cycle: u32,
-  timer: &mut Timer<T, U>,
+fn light_up_row<T: Instance>(
+  row_delay_us: u32,
+  timer: &mut Timer<T>,
   row_pin: &mut Led,
   col_pins: &mut [Led; 5],
   row: &[u8; 5],
@@ -79,7 +90,7 @@ fn light_up_row<T: Instance, U>(
     }
   }
 
-  timer.delay(light_up_cycle);
+  timer.delay_us(row_delay_us);
 
   col_pins.iter_mut().for_each(|x| x.set_high().unwrap());
   row_pin.set_low().unwrap();

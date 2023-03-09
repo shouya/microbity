@@ -12,5 +12,8 @@ mod raw_led;
 #[entry]
 fn main() -> ! {
   let board = Board::take().unwrap();
-  raw_led::led_demo(board)
+
+  raw_led::led_demo(board);
+
+  loop {}
 }
