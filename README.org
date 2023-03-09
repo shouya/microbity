@@ -1,0 +1,10 @@
+* Reference materials
+
+- [[https://docs.rs/microbit-v2][microbit - Rust]]
+- [[https://tech.microbit.org/hardware/][Hardware Spec]]
+- [[https://tech.microbit.org/hardware/edgeconnector/#pins-and-signals][Edge Connector and Pinout]]
+- [[https://raw.githubusercontent.com/microbit-foundation/microbit-v2-hardware/main/V2.21/MicroBit_V2.2.1_nRF52820%20schematic.PDF][Schematics]]
+
+Parts:
+
+- [[https://www.digikey.com/en/products/detail/knowles/SPU0410LR5H-QB/2420974][SPU0410LR5H-QB Knowles | Audio Products | DigiKey]] (microphone)
