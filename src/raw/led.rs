@@ -10,7 +10,65 @@ use microbit::{
   Board,
 };
 
-type Led = Pin<Output<PushPull>>;
+type LedPin = Pin<Output<PushPull>>;
+
+pub struct LedMatrix<T: Instance> {
+  row_pins: [LedPin; 5],
+  col_pins: [LedPin; 5],
+  timer: Timer<T>,
+  matrix: [[u8; 5]; 5],
+}
+
+impl<T: Instance> LedMatrix<T> {
+  const ROW_LIGHT_UP_US: u32 = 50;
+
+  pub fn setup(display_pins: DisplayPins, timer: Timer<T>) -> Self {
+    let (col_pins, row_pins) = display_pins.degrade();
+    let matrix = Default::default();
+
+    Self {
+      row_pins,
+      col_pins,
+      timer,
+      matrix,
+    }
+  }
+
+  pub fn show(&mut self, time: u32) {
+    for _ in 0..time {
+      for r in 0..5 {
+        self.light_up_row(r);
+      }
+    }
+  }
+
+  pub fn set_matrix(&mut self, matrix: [[u8; 5]; 5]) {
+    self.matrix = matrix;
+  }
+
+  pub fn set_cell(&mut self, pos: (usize, usize), val: bool) {
+    self.matrix[pos.0][pos.1] = val as u8;
+  }
+
+  fn light_up_row(&mut self, r: usize) {
+    let row_pin = &mut self.row_pins[r];
+    let col_pins = &mut self.col_pins;
+    let row = &self.matrix[r];
+
+    row_pin.set_high().unwrap();
+
+    for i in 0..5 {
+      if row[i] > 0 {
+        col_pins[i].set_low().unwrap();
+      }
+    }
+
+    self.timer.delay_us(Self::ROW_LIGHT_UP_US);
+
+    col_pins.iter_mut().for_each(|x| x.set_high().unwrap());
+    row_pin.set_low().unwrap();
+  }
+}
 
 #[allow(unused)]
 pub fn raw_demo(mut board: Board) -> ! {
@@ -32,66 +90,4 @@ pub fn raw_demo(mut board: Board) -> ! {
     board.display_pins.row2.set_low().unwrap();
     board.display_pins.col2.set_high().unwrap();
   }
-}
-
-#[allow(unused)]
-pub fn light_up_demo(board: Board) {
-  light_up(
-    1000,
-    &mut Timer::new(board.TIMER0),
-    board.display_pins,
-    [
-      [1, 0, 1, 0, 1],
-      [0, 1, 0, 1, 0],
-      [0, 0, 0, 0, 1],
-      [1, 1, 1, 1, 0],
-      [0, 0, 1, 0, 0],
-    ],
-  );
-}
-
-#[allow(unused)]
-pub fn light_up<T: Instance>(
-  ms: u32,
-  timer: &mut Timer<T>,
-  display_pins: DisplayPins,
-  matrix: [[u8; 5]; 5],
-) {
-  const ROW_LIGHT_UP_US: u32 = 50;
-  const ALL_LIGHT_UP_US: u32 = ROW_LIGHT_UP_US * 5;
-
-  let (mut col_pins, mut row_pins) = display_pins.degrade();
-
-  for _ in 0..(ms * 1000 / ALL_LIGHT_UP_US) {
-    for r in 0..5 {
-      light_up_row(
-        ROW_LIGHT_UP_US,
-        timer,
-        &mut row_pins[r],
-        &mut col_pins,
-        &matrix[r],
-      );
-    }
-  }
-}
-
-fn light_up_row<T: Instance>(
-  row_delay_us: u32,
-  timer: &mut Timer<T>,
-  row_pin: &mut Led,
-  col_pins: &mut [Led; 5],
-  row: &[u8; 5],
-) {
-  row_pin.set_high().unwrap();
-
-  for i in 0..5 {
-    if row[i] > 0 {
-      col_pins[i].set_low().unwrap();
-    }
-  }
-
-  timer.delay_us(row_delay_us);
-
-  col_pins.iter_mut().for_each(|x| x.set_high().unwrap());
-  row_pin.set_low().unwrap();
 }
