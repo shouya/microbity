@@ -30,6 +30,25 @@ impl Microphone {
   }
 
   pub fn read(&mut self) -> u16 {
-    self.saadc.read(&mut self.mic_in).unwrap() as u16
+    self.saadc.read(&mut self.mic_in).unwrap_or_default() as u16
+  }
+
+  pub fn sample(&mut self, n: usize) -> u16 {
+    let mut avg = 0u16;
+    let mut div = 0u16;
+
+    for i in 1..=n {
+      let v = self.read();
+
+      let avg_diff = (v as i32 - avg as i32) as i16 / i as i16;
+      avg = avg.saturating_add_signed(avg_diff);
+
+      // discard first three samples because the avg is not accurate
+      if i > 3 {
+        div += (v as i32 - avg as i32).unsigned_abs() as u16;
+      }
+    }
+
+    div
   }
 }
