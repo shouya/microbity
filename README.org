@@ -7,4 +7,6 @@
 
 Parts:
 
+- [[https://www.nordicsemi.com/products/nrf52833][nRF52833 - Advanced Bluetooth multiprotocol SoC - nordicsemi.com]]
+  + [[https://infocenter.nordicsemi.com/pdf/nRF52833_PS_v1.5.pdf][SoC specification]]
 - [[https://www.digikey.com/en/products/detail/knowles/SPU0410LR5H-QB/2420974][SPU0410LR5H-QB Knowles | Audio Products | DigiKey]] (microphone)

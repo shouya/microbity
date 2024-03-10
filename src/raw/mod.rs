@@ -1,4 +1,5 @@
 pub mod led;
+pub mod clock;
 pub mod microphone;
 pub mod serial;
 

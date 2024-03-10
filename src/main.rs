@@ -3,12 +3,13 @@
 #![no_std]
 
 use cortex_m_rt::entry;
-use panic_halt as _;
+use panic_rtt_target as _;
 
 mod app;
 mod raw;
 
 #[entry]
 fn main() -> ! {
-  app::volume::show_volumne()
+  app::playground::playground();
+  // app::volume::show_volumne();
 }

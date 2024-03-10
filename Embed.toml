@@ -2,11 +2,11 @@
 chip = "nrf52833_xxAA" # uncomment this line for micro:bit V2
 
 # run program automatically
-# [default.reset]
-# halt_afterwards = true
+[default.reset]
+halt_afterwards = false
 
 [default.rtt]
-enabled = false
+enabled = true
 
-# [default.gdb]
-# enabled = true
+[default.gdb]
+enabled = false
