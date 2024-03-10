@@ -7,8 +7,6 @@ use microbit::Board;
 use rtt_target::{rprintln, rtt_init_print};
 
 pub fn playground() -> ! {
-  rtt_init_print!();
-
   let mut board = Board::take().unwrap();
   board.SYST.enable_counter();
   board.SYST.set_clock_source(Core);

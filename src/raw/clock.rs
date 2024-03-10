@@ -1,7 +1,4 @@
-use core::borrow::BorrowMut;
-
 use cortex_m::peripheral::{DWT, SYST};
-use microbit::Board;
 
 struct Clock {
   syst: SYST,
@@ -9,7 +6,7 @@ struct Clock {
 }
 
 impl Clock {
-  pub fn setup(board: &Board) -> Self {
+  pub fn setup(_syst: SYST) -> Self {
     unimplemented!()
   }
 }
