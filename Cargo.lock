@@ -225,6 +225,7 @@ version = "0.1.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
+ "fixed",
  "heapless",
  "microbit-v2",
  "panic-rtt-target",

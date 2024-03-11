@@ -1,5 +1,7 @@
-pub mod led;
+#![allow(unused_imports)]
+
 pub mod clock;
+pub mod led;
 pub mod microphone;
 pub mod serial;
 
