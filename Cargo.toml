@@ -16,7 +16,8 @@ panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
 
 [features]
-default = ["app_temp"]
+default = ["app_i2c_display"]
 app_temp = []
 app_volume = []
 app_playground = []
+app_i2c_display = []

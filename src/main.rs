@@ -13,7 +13,12 @@ mod raw;
 fn main() -> ! {
   rtt_init_print!();
 
-  // app::playground::playground();
-  // app::volume::show_volumne();
+  #[cfg(feature = "app_playground")]
+  app::playground::playground();
+  #[cfg(feature = "app_volume")]
+  app::volume::show_volumne();
+  #[cfg(feature = "app_temp")]
   app::temp::measure_temp();
+  #[cfg(feature = "app_i2c_display")]
+  app::i2c_display::run();
 }
