@@ -1,0 +1,4 @@
+How to create from audio.raw from wav?
+
+ffmpeg -i input.wav -f u8 output.raw
+

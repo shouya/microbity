@@ -21,4 +21,6 @@ fn main() -> ! {
   app::temp::measure_temp();
   #[cfg(feature = "app_i2c_display")]
   app::i2c_display::run();
+  #[cfg(feature = "app_beeper")]
+  app::beeper::beeper();
 }

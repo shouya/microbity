@@ -1,3 +1,5 @@
+#[cfg(feature = "app_beeper")]
+pub mod beeper;
 #[cfg(feature = "app_i2c_display")]
 pub mod i2c_display;
 #[cfg(feature = "app_playground")]
