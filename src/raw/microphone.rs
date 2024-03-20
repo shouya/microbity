@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use cortex_m::prelude::_embedded_hal_adc_OneShot;
 use microbit::{
   gpio::MicrophonePins,
