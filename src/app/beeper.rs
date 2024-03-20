@@ -1,11 +1,11 @@
 use core::{
-  cell::{Cell, OnceCell, RefCell},
-  sync::atomic::{AtomicU16, AtomicU32, Ordering},
+  cell::{OnceCell, RefCell},
+  sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering},
   u16,
 };
 
 use cortex_m::{
-  asm::delay,
+  asm::{self, delay},
   interrupt::{free, CriticalSection, Mutex},
   peripheral::NVIC,
 };
@@ -41,9 +41,9 @@ static PWM_REFRESH: AtomicU32 = AtomicU32::new(30);
 // Therefore, PWM_COUNTERTOP = PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (1 + REFRESH))
 static PWM_COUNTERTOP: AtomicU16 = AtomicU16::new(1); // initialize to an arbitrary value
 
-const GAIN: f32 = 2.0;
+const GAIN: f32 = 1.0;
 
-static CURSOR: Mutex<Cell<usize>> = Mutex::new(Cell::new(0));
+static CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 const BUF_LEN: usize = 512;
 static BUFFER0: Mutex<RefCell<[u16; BUF_LEN]>> =
@@ -89,7 +89,9 @@ fn play_sound_data() -> ! {
     GPIOTE.borrow(cs).set(board.GPIOTE).unwrap();
   });
 
-  loop {}
+  loop {
+    asm::wfi();
+  }
 }
 
 // update the pwm countertop if the refresh rate is changed
@@ -244,7 +246,7 @@ fn GPIOTE() {
 }
 
 fn fill_next_buffer(id: u8, cs: &CriticalSection) {
-  let cursor = CURSOR.borrow(cs).get();
+  let cursor = CURSOR.load(Ordering::Relaxed);
   let buffer = match id {
     0 => BUFFER0.borrow(cs),
     1 => BUFFER1.borrow(cs),
@@ -253,7 +255,7 @@ fn fill_next_buffer(id: u8, cs: &CriticalSection) {
 
   let mut buffer = buffer.borrow_mut();
   let new_cursor = fill_samples(buffer.as_mut_slice(), AUDIO_DATA, cursor);
-  CURSOR.borrow(cs).set(new_cursor);
+  CURSOR.store(new_cursor, Ordering::Relaxed);
 }
 
 fn fill_samples(buffer: &mut [u16], data: &[u8], cursor: usize) -> usize {
@@ -279,7 +281,7 @@ fn play_seq(id: u8, pwm: &Pwm) {
   pwm.tasks_seqstart[id as usize].write(|w| w.tasks_seqstart().trigger());
 }
 
-#[allow(dead_code)]
+#[allow(unused)]
 // square wave
 fn naive() -> ! {
   let board = Board::take().unwrap();
@@ -299,6 +301,7 @@ fn naive() -> ! {
   }
 }
 
+#[allow(unused)]
 fn sleep(n: usize) {
   delay(n as u32);
 }
