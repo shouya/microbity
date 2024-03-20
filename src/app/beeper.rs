@@ -41,7 +41,7 @@ static PWM_REFRESH: AtomicU32 = AtomicU32::new(30);
 // Therefore, PWM_COUNTERTOP = PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (1 + REFRESH))
 static PWM_COUNTERTOP: AtomicU16 = AtomicU16::new(1); // initialize to an arbitrary value
 
-const GAIN: f32 = 1.0;
+const GAIN: f32 = 2.0;
 
 static CURSOR: Mutex<Cell<usize>> = Mutex::new(Cell::new(0));
 
@@ -256,23 +256,23 @@ fn fill_next_buffer(id: u8, cs: &CriticalSection) {
   CURSOR.borrow(cs).set(new_cursor);
 }
 
-// in case the data sample rate is higher than the target sample rate,
-// we read the every SAMPLE_STRIDE sample in the data file to get the same sample rate
-const SAMPLE_STRIDE: usize = (DATA_SAMPLE_RATE / TARGET_SAMPLE_RATE) as usize;
-
 fn fill_samples(buffer: &mut [u16], data: &[u8], cursor: usize) -> usize {
-  let mut cursor = cursor;
+  // in case the data sample rate is different than the target sample
+  // rate, we read the every SAMPLE_STRIDE sample in the data file to
+  // get the same sample rate
+  let stride = DATA_SAMPLE_RATE as f32 / TARGET_SAMPLE_RATE as f32;
   let countertop = PWM_COUNTERTOP.load(Ordering::Relaxed) as usize;
-  for cell in buffer.iter_mut() {
-    let sample = data[cursor] as f32 / 255.0;
+  let pos = |i| (cursor + (stride * i as f32) as usize) % data.len();
+
+  for (i, cell) in buffer.iter_mut().enumerate() {
+    let sample = data[pos(i)] as f32 / 255.0;
     let sample = (sample - 0.5) * GAIN + 0.5;
     let sample = (sample * countertop as f32) as u16;
     *cell = sample;
-    cursor = (cursor + SAMPLE_STRIDE) % data.len();
   }
 
   // return next cursor
-  cursor
+  pos(buffer.len())
 }
 
 fn play_seq(id: u8, pwm: &Pwm) {
