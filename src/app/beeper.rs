@@ -1,5 +1,6 @@
 use core::{
   cell::{Cell, OnceCell, RefCell},
+  sync::atomic::{AtomicU16, AtomicU32, Ordering},
   u16,
 };
 
@@ -10,7 +11,7 @@ use cortex_m::{
 };
 use microbit::{
   hal::{gpio::Level, prelude::OutputPin},
-  pac::{interrupt, pwm0::prescaler::PRESCALER_A, PWM0},
+  pac::{interrupt, pwm0::prescaler::PRESCALER_A, GPIOTE, PWM0},
   Board,
 };
 use rtt_target::rprintln;
@@ -26,20 +27,19 @@ const DATA_SAMPLE_RATE: u32 = 2700;
 // the speaker's resonance frequency
 const TARGET_SAMPLE_RATE: u32 = 2700;
 
-// each sample will be played REFRESH+1 times. This smooths out the sound.
-const REFRESH: u32 = 5;
-
 // the prescaler sets the PWM clock frequency.
 const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 
 // the PWM clock frequency is 16 MHz / (2^PWM_PRESCALER)
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 
+// each sample will be played REFRESH+1 times. This smooths out the sound.
+static PWM_REFRESH: AtomicU32 = AtomicU32::new(30);
+
 // make sure each sample to have duration TARGET_SAMPLE_RATE^-1
 // Since: sample duration = (PWM_CLOCK_FREQ / (PWM_COUNTERTOP * (1 + REFRESH)))^-1 = TARGET_SAMPLE_RATE^-1
 // Therefore, PWM_COUNTERTOP = PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (1 + REFRESH))
-const PWM_COUNTERTOP: u16 =
-  (PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (REFRESH + 1))) as u16;
+static PWM_COUNTERTOP: AtomicU16 = AtomicU16::new(1); // initialize to an arbitrary value
 
 const GAIN: f32 = 1.0;
 
@@ -53,6 +53,7 @@ static BUFFER1: Mutex<RefCell<[u16; BUF_LEN]>> =
 
 type Pwm = PWM0;
 static PWM: Mutex<OnceCell<Pwm>> = Mutex::new(OnceCell::new());
+static GPIOTE: Mutex<OnceCell<GPIOTE>> = Mutex::new(OnceCell::new());
 
 pub fn beeper() -> ! {
   play_sound_data()
@@ -68,9 +69,8 @@ fn play_sound_data() -> ! {
 
   let pwm = board.PWM0;
 
-  rprintln!("parameters: {} {}", PWM_COUNTERTOP, PWM_CLOCK_FREQ);
-
   setup_pwm(&pwm, speaker_pin.psel_bits());
+  setup_buttons(&board.GPIOTE, board.buttons);
 
   unsafe { setup_interrupt(&mut board.NVIC) };
 
@@ -82,9 +82,67 @@ fn play_sound_data() -> ! {
 
   // save pwm for interrupt
   play_seq(0, &pwm);
-  free(|cs| PWM.borrow(cs).set(pwm).unwrap());
+
+  // save the peripherals for use in interrupt
+  free(|cs| {
+    PWM.borrow(cs).set(pwm).unwrap();
+    GPIOTE.borrow(cs).set(board.GPIOTE).unwrap();
+  });
 
   loop {}
+}
+
+// update the pwm countertop if the refresh rate is changed
+fn configure_pwm_countertop(pwm: &Pwm) {
+  let refresh = PWM_REFRESH.load(Ordering::Relaxed);
+  let countertop =
+    (PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (refresh + 1))) as u16;
+  PWM_COUNTERTOP.store(countertop, Ordering::Relaxed);
+
+  unsafe {
+    // pwm period
+    pwm.countertop.write(|w| w.countertop().bits(countertop));
+
+    // each period is repeated REFRESH+1 times
+    pwm.seq0.refresh.write(|w| w.bits(refresh));
+    pwm.seq1.refresh.write(|w| w.bits(refresh));
+  }
+
+  rprintln!(
+    "clock freq: {}, refresh {}, counter top: {}",
+    PWM_CLOCK_FREQ,
+    PWM_REFRESH.load(Ordering::Relaxed),
+    PWM_COUNTERTOP.load(Ordering::Relaxed),
+  );
+}
+
+fn setup_buttons(gpiote: &GPIOTE, buttons: microbit::board::Buttons) {
+  // enable gpio event for button a
+  gpiote.config[0].write(|w| unsafe {
+    w.mode()
+      .event()
+      .psel()
+      .bits(buttons.button_a.degrade().pin())
+      .polarity()
+      .hi_to_lo()
+      .outinit()
+      .low()
+  });
+
+  // enable gpio event for button b
+  gpiote.config[1].write(|w| unsafe {
+    w.mode()
+      .event()
+      .psel()
+      .bits(buttons.button_b.degrade().pin())
+      .polarity()
+      .hi_to_lo()
+      .outinit()
+      .low()
+  });
+
+  // enable interrupt
+  gpiote.intenset.write(|w| w.in0().set().in1().set());
 }
 
 #[allow(dead_code)]
@@ -98,11 +156,11 @@ fn dump_mem(start: u32, end: u32) {
 }
 
 unsafe fn setup_interrupt(nvic: &mut NVIC) {
-  nvic.set_priority(interrupt::PWM0, 1);
+  nvic.set_priority(interrupt::PWM0, 10);
   NVIC::unmask(interrupt::PWM0);
-  // PWM0 is unused
-  nvic.set_priority(interrupt::PWM1, 1);
-  NVIC::unmask(interrupt::PWM1);
+
+  nvic.set_priority(interrupt::GPIOTE, 9);
+  NVIC::unmask(interrupt::GPIOTE);
 }
 
 fn setup_pwm(pwm: &Pwm, speaker_pin: u32) {
@@ -120,14 +178,7 @@ fn setup_pwm(pwm: &Pwm, speaker_pin: u32) {
     .prescaler
     .write(|w| w.prescaler().bits(PWM_PRESCALER as u8));
 
-  // pwm period frequency = PWM_CLOCK_FREQ / PWM_COUNTERTOP
-  pwm
-    .countertop
-    .write(|w| unsafe { w.countertop().bits(PWM_COUNTERTOP) });
-
-  // each period is repeated REFRESH+1 times
-  pwm.seq0.refresh.write(|w| unsafe { w.bits(REFRESH) });
-  pwm.seq1.refresh.write(|w| unsafe { w.bits(REFRESH) });
+  configure_pwm_countertop(pwm);
 
   // set seq pointer to buffer
   free(|cs| {
@@ -171,6 +222,27 @@ fn PWM0() {
   });
 }
 
+#[interrupt]
+fn GPIOTE() {
+  free(|cs| {
+    let gpiote = GPIOTE.borrow(cs).get().unwrap();
+
+    // button a pressed
+    if gpiote.events_in[0].read().bits() != 0 {
+      gpiote.events_in[0].write(|w| w.events_in().clear_bit());
+      PWM_REFRESH.fetch_sub(1, Ordering::Relaxed);
+      configure_pwm_countertop(PWM.borrow(cs).get().unwrap());
+    }
+
+    // button b pressed
+    if gpiote.events_in[1].read().bits() != 0 {
+      gpiote.events_in[1].write(|w| w.events_in().clear_bit());
+      PWM_REFRESH.fetch_add(1, Ordering::Relaxed);
+      configure_pwm_countertop(PWM.borrow(cs).get().unwrap());
+    }
+  });
+}
+
 fn fill_next_buffer(id: u8, cs: &CriticalSection) {
   let cursor = CURSOR.borrow(cs).get();
   let buffer = match id {
@@ -190,10 +262,11 @@ const SAMPLE_STRIDE: usize = (DATA_SAMPLE_RATE / TARGET_SAMPLE_RATE) as usize;
 
 fn fill_samples(buffer: &mut [u16], data: &[u8], cursor: usize) -> usize {
   let mut cursor = cursor;
+  let countertop = PWM_COUNTERTOP.load(Ordering::Relaxed) as usize;
   for cell in buffer.iter_mut() {
     let sample = data[cursor] as f32 / 255.0;
     let sample = (sample - 0.5) * GAIN + 0.5;
-    let sample = (sample * PWM_COUNTERTOP as f32) as u16;
+    let sample = (sample * countertop as f32) as u16;
     *cell = sample;
     cursor = (cursor + SAMPLE_STRIDE) % data.len();
   }
@@ -218,6 +291,8 @@ fn naive() -> ! {
 
   loop {
     speaker_pin.set_high().unwrap();
+    // 10_000 cycles at 64 MHz ~= 156 us
+    // therefore, one period is around 312 us = 3.2 kHz.
     delay(10_000);
     speaker_pin.set_low().unwrap();
     delay(10_000);
