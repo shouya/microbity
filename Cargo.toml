@@ -11,12 +11,13 @@ cortex-m-rt = "0.7.3"
 fixed = "1.26.0"
 heapless = "0.7.16"
 microbit-v2 = { git = "https://github.com/nrf-rs/microbit", branch = "main" }
+midly = { version = "0.5.3", default-features = false }
 # panic-halt = "0.2.0"
 panic-rtt-target = { version = "0.1.2", features = ["cortex-m"] }
 rtt-target = { version = "0.3.1", features = ["cortex-m"] }
 
 [features]
-default = ["app_pcm_player"]
+default = ["app_midi_player"]
 app_temp = []
 app_volume = []
 app_playground = []

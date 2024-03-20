@@ -23,4 +23,6 @@ fn main() -> ! {
   app::i2c_display::run();
   #[cfg(feature = "app_pcm_player")]
   app::pcm_player::play();
+  #[cfg(feature = "app_midi_player")]
+  app::midi_player::play();
 }
