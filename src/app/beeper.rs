@@ -76,8 +76,8 @@ fn play_sound_data() -> ! {
 
   // setup for initial playback
   free(|cs| {
-    set_next_buffer(0, &pwm, cs);
-    set_next_buffer(1, &pwm, cs);
+    fill_next_buffer(0, cs);
+    fill_next_buffer(1, cs);
   });
 
   // save pwm for interrupt
@@ -115,40 +115,34 @@ fn setup_pwm(pwm: &Pwm, speaker_pin: u32) {
   // mode
   pwm.mode.write(|w| w.updown().up());
 
-  // pwm period = ~15.625 kHz
-  pwm
-    .countertop
-    .write(|w| unsafe { w.countertop().bits(PWM_COUNTERTOP) });
-
-  // set pwm clock frequency to 1 MHz
+  // pwm clock frequency
   pwm
     .prescaler
     .write(|w| w.prescaler().bits(PWM_PRESCALER as u8));
 
-  // set short circuit: stop when seq stops
-  // pwm
-  //   .shorts
-  //   .write(|w| w.seqend0_stop().enabled().seqend1_stop().enabled());
+  // pwm period frequency = PWM_CLOCK_FREQ / PWM_COUNTERTOP
+  pwm
+    .countertop
+    .write(|w| unsafe { w.countertop().bits(PWM_COUNTERTOP) });
+
+  // each period is repeated REFRESH+1 times
+  pwm.seq0.refresh.write(|w| unsafe { w.bits(REFRESH) });
+  pwm.seq1.refresh.write(|w| unsafe { w.bits(REFRESH) });
 
   // set seq pointer to buffer
   free(|cs| {
+    // if the playback goes faster than the cpu can fill in the
+    // buffer, the pwm will generate a sequence from garbage. so
+    // strictly speaking, the pointer assignments is unsafe. but
+    // generally it's much faster to generate the buffer than
+    // consuming it. so i'll just keep it this way.
     let buf_0_ptr = BUFFER0.borrow(cs).as_ptr() as u32;
     let buf_1_ptr = BUFFER1.borrow(cs).as_ptr() as u32;
-    pwm.seq0.ptr.write(|w| unsafe { w.ptr().bits(buf_0_ptr) });
-    pwm
-      .seq0
-      .cnt
-      .write(|w| unsafe { w.cnt().bits(BUF_LEN as u16) });
-    pwm.seq1.ptr.write(|w| unsafe { w.ptr().bits(buf_1_ptr) });
-    pwm
-      .seq1
-      .cnt
-      .write(|w| unsafe { w.cnt().bits(BUF_LEN as u16) });
+    pwm.seq0.ptr.write(|w| unsafe { w.bits(buf_0_ptr) });
+    pwm.seq0.cnt.write(|w| unsafe { w.bits(BUF_LEN as u32) });
+    pwm.seq1.ptr.write(|w| unsafe { w.bits(buf_1_ptr) });
+    pwm.seq1.cnt.write(|w| unsafe { w.bits(BUF_LEN as u32) });
   });
-
-  // make seq0 and seq1 play continuously
-  pwm.seq0.refresh.write(|w| unsafe { w.bits(REFRESH) });
-  pwm.seq1.refresh.write(|w| unsafe { w.bits(REFRESH) });
 
   // set decode mode to one sample at a time
   pwm
@@ -166,18 +160,18 @@ fn PWM0() {
     if pwm.events_seqend[0].read().bits() != 0 {
       pwm.events_seqend[0].write(|w| w.events_seqend().clear_bit());
       play_seq(1, pwm);
-      set_next_buffer(0, pwm, cs);
+      fill_next_buffer(0, cs);
     }
 
     if pwm.events_seqend[1].read().bits() != 0 {
       pwm.events_seqend[1].write(|w| w.events_seqend().clear_bit());
       play_seq(0, pwm);
-      set_next_buffer(1, pwm, cs);
+      fill_next_buffer(1, cs);
     }
   });
 }
 
-fn set_next_buffer(id: u8, pwm: &Pwm, cs: &CriticalSection) {
+fn fill_next_buffer(id: u8, cs: &CriticalSection) {
   let cursor = CURSOR.borrow(cs).get();
   let buffer = match id {
     0 => BUFFER0.borrow(cs),
@@ -185,9 +179,8 @@ fn set_next_buffer(id: u8, pwm: &Pwm, cs: &CriticalSection) {
     _ => panic!("invalid id"),
   };
 
-  let new_cursor =
-    fill_samples(buffer.borrow_mut().as_mut_slice(), AUDIO_DATA, cursor);
-
+  let mut buffer = buffer.borrow_mut();
+  let new_cursor = fill_samples(buffer.as_mut_slice(), AUDIO_DATA, cursor);
   CURSOR.borrow(cs).set(new_cursor);
 }
 
@@ -198,12 +191,14 @@ const SAMPLE_STRIDE: usize = (DATA_SAMPLE_RATE / TARGET_SAMPLE_RATE) as usize;
 fn fill_samples(buffer: &mut [u16], data: &[u8], cursor: usize) -> usize {
   let mut cursor = cursor;
   for cell in buffer.iter_mut() {
-    cursor = (cursor + SAMPLE_STRIDE) % data.len();
     let sample = data[cursor] as f32 / 255.0;
     let sample = (sample - 0.5) * GAIN + 0.5;
     let sample = (sample * PWM_COUNTERTOP as f32) as u16;
     *cell = sample;
+    cursor = (cursor + SAMPLE_STRIDE) % data.len();
   }
+
+  // return next cursor
   cursor
 }
 
