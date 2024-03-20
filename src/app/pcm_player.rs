@@ -1,5 +1,5 @@
 use core::{
-  cell::{OnceCell, RefCell},
+  cell::{Cell, OnceCell, RefCell},
   sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering},
   u16,
 };
@@ -23,9 +23,9 @@ use rtt_target::rprintln;
 // -t 60: 60 seconds (make sure the file is not too large to fit in flash)
 const AUDIO_DATA: &[u8] = include_bytes!("../../assets/bad-apple.raw");
 // the sample rate of the audio data
-const DATA_SAMPLE_RATE: u32 = 2700;
+const DATA_SAMPLE_RATE: u32 = 16000;
 // the speaker's resonance frequency
-const TARGET_SAMPLE_RATE: u32 = 2700;
+static TARGET_SAMPLE_RATE: AtomicU32 = AtomicU32::new(16000);
 
 // the prescaler sets the PWM clock frequency.
 const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
@@ -34,7 +34,7 @@ const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 
 // each sample will be played REFRESH+1 times. This smooths out the sound.
-static PWM_REFRESH: AtomicU32 = AtomicU32::new(30);
+static PWM_REFRESH: AtomicU32 = AtomicU32::new(3);
 
 // make sure each sample to have duration TARGET_SAMPLE_RATE^-1
 // Since: sample duration = (PWM_CLOCK_FREQ / (PWM_COUNTERTOP * (1 + REFRESH)))^-1 = TARGET_SAMPLE_RATE^-1
@@ -55,7 +55,37 @@ type Pwm = PWM0;
 static PWM: Mutex<OnceCell<Pwm>> = Mutex::new(OnceCell::new());
 static GPIOTE: Mutex<OnceCell<GPIOTE>> = Mutex::new(OnceCell::new());
 
-pub fn beeper() -> ! {
+#[derive(Clone, Copy)]
+#[allow(unused)]
+enum ButtonFunction {
+  PwmRefresh,
+  TargetSampleRate,
+}
+
+static BUTTON_FUNCTION: Mutex<Cell<ButtonFunction>> =
+  Mutex::new(Cell::new(ButtonFunction::TargetSampleRate));
+
+impl ButtonFunction {
+  fn up(&self) {
+    match self {
+      ButtonFunction::PwmRefresh => PWM_REFRESH.fetch_add(1, Ordering::Relaxed),
+      ButtonFunction::TargetSampleRate => {
+        TARGET_SAMPLE_RATE.fetch_add(100, Ordering::Relaxed)
+      }
+    };
+  }
+
+  fn down(&self) {
+    match self {
+      ButtonFunction::PwmRefresh => PWM_REFRESH.fetch_sub(1, Ordering::Relaxed),
+      ButtonFunction::TargetSampleRate => {
+        TARGET_SAMPLE_RATE.fetch_sub(100, Ordering::Relaxed)
+      }
+    };
+  }
+}
+
+pub fn play() -> ! {
   play_sound_data()
 }
 
@@ -95,10 +125,11 @@ fn play_sound_data() -> ! {
 }
 
 // update the pwm countertop if the refresh rate is changed
-fn configure_pwm_countertop(pwm: &Pwm) {
+fn configure_pwm(pwm: &Pwm) {
   let refresh = PWM_REFRESH.load(Ordering::Relaxed);
+  let target_sample_rate = TARGET_SAMPLE_RATE.load(Ordering::Relaxed);
   let countertop =
-    (PWM_CLOCK_FREQ / (TARGET_SAMPLE_RATE * (refresh + 1))) as u16;
+    (PWM_CLOCK_FREQ / (target_sample_rate * (refresh + 1))) as u16;
   PWM_COUNTERTOP.store(countertop, Ordering::Relaxed);
 
   unsafe {
@@ -111,10 +142,10 @@ fn configure_pwm_countertop(pwm: &Pwm) {
   }
 
   rprintln!(
-    "clock freq: {}, refresh {}, counter top: {}",
-    PWM_CLOCK_FREQ,
-    PWM_REFRESH.load(Ordering::Relaxed),
-    PWM_COUNTERTOP.load(Ordering::Relaxed),
+    "sample rate: {}, refresh {}, counter top: {}",
+    target_sample_rate,
+    refresh,
+    countertop
   );
 }
 
@@ -147,7 +178,7 @@ fn setup_buttons(gpiote: &GPIOTE, buttons: microbit::board::Buttons) {
   gpiote.intenset.write(|w| w.in0().set().in1().set());
 }
 
-#[allow(dead_code)]
+#[allow(unused)]
 fn dump_mem(start: u32, end: u32) {
   for i in start..end {
     unsafe {
@@ -180,7 +211,7 @@ fn setup_pwm(pwm: &Pwm, speaker_pin: u32) {
     .prescaler
     .write(|w| w.prescaler().bits(PWM_PRESCALER as u8));
 
-  configure_pwm_countertop(pwm);
+  configure_pwm(pwm);
 
   // set seq pointer to buffer
   free(|cs| {
@@ -228,19 +259,20 @@ fn PWM0() {
 fn GPIOTE() {
   free(|cs| {
     let gpiote = GPIOTE.borrow(cs).get().unwrap();
+    let button_function = BUTTON_FUNCTION.borrow(cs).get();
 
     // button a pressed
     if gpiote.events_in[0].read().bits() != 0 {
       gpiote.events_in[0].write(|w| w.events_in().clear_bit());
-      PWM_REFRESH.fetch_sub(1, Ordering::Relaxed);
-      configure_pwm_countertop(PWM.borrow(cs).get().unwrap());
+      button_function.up();
+      configure_pwm(PWM.borrow(cs).get().unwrap());
     }
 
     // button b pressed
     if gpiote.events_in[1].read().bits() != 0 {
       gpiote.events_in[1].write(|w| w.events_in().clear_bit());
-      PWM_REFRESH.fetch_add(1, Ordering::Relaxed);
-      configure_pwm_countertop(PWM.borrow(cs).get().unwrap());
+      button_function.down();
+      configure_pwm(PWM.borrow(cs).get().unwrap());
     }
   });
 }
@@ -262,7 +294,8 @@ fn fill_samples(buffer: &mut [u16], data: &[u8], cursor: usize) -> usize {
   // in case the data sample rate is different than the target sample
   // rate, we read the every SAMPLE_STRIDE sample in the data file to
   // get the same sample rate
-  let stride = DATA_SAMPLE_RATE as f32 / TARGET_SAMPLE_RATE as f32;
+  let target_sample_rate = TARGET_SAMPLE_RATE.load(Ordering::Relaxed);
+  let stride = DATA_SAMPLE_RATE as f32 / target_sample_rate as f32;
   let countertop = PWM_COUNTERTOP.load(Ordering::Relaxed) as usize;
   let pos = |i| (cursor + (stride * i as f32) as usize) % data.len();
 
