@@ -7,11 +7,12 @@ use cortex_m::{
 };
 use heapless::Vec;
 use microbit::{
-  hal::gpio::{Disconnected, Pin},
+  board::Buttons,
+  hal::gpio::{Disconnected, Floating, Input, Level, Output, Pin, PushPull},
   pac::{
     interrupt,
     pwm0::{self, prescaler::PRESCALER_A, RegisterBlock},
-    PWM0, PWM1, PWM2, PWM3, RTC0,
+    GPIOTE, PWM0, PWM1, PWM2, PWM3, RTC0,
   },
   Board,
 };
@@ -39,7 +40,9 @@ struct Peripherals {
   pwms: (PWM0, PWM1, PWM2, PWM3),
   rtc: RTC0,
   nvic: NVIC,
-  speaker_pin: Pin<Disconnected>,
+  speaker_pin: Pin<Output<PushPull>>,
+  gpiote: GPIOTE,
+  buttons: [Pin<Input<Floating>>; 2],
 }
 
 enum NextEvent {
@@ -48,7 +51,7 @@ enum NextEvent {
   Pending,
 }
 
-const MAX_TRACKS: usize = 32;
+const MAX_TRACKS: usize = 3;
 
 struct Tracks {
   // we support at most 8 tracks
@@ -117,8 +120,6 @@ impl Tracks {
 
       let event = self.next_event().unwrap();
 
-      rprintln!("next event: {:?}", event);
-
       if let TrackEventKind::Midi { .. } = event.kind {
         return NextEvent::Event(event);
       }
@@ -155,7 +156,15 @@ impl Peripherals {
       pwms: (board.PWM0, board.PWM1, board.PWM2, board.PWM3),
       rtc: board.RTC0,
       nvic: board.NVIC,
-      speaker_pin: board.speaker_pin.degrade(),
+      speaker_pin: board
+        .speaker_pin
+        .into_push_pull_output(Level::Low)
+        .degrade(),
+      gpiote: board.GPIOTE,
+      buttons: [
+        board.buttons.button_a.into_floating_input().degrade(),
+        board.buttons.button_b.into_floating_input().degrade(),
+      ],
     }
   }
 
@@ -216,21 +225,21 @@ impl AppState {
     }
 
     setup_timer(&self.peripherals.rtc, self.ticks_per_sec);
-
     setup_interrupt(&mut self.peripherals.nvic);
+    setup_buttons(&self.peripherals.gpiote, &self.peripherals.buttons);
   }
 
   fn start(&mut self) {
     // start ticking
-    self
-      .peripherals
-      .rtc
-      .tasks_start
-      .write(|w| w.tasks_start().trigger());
+    // self
+    //   .peripherals
+    //   .rtc
+    //   .tasks_start
+    //   .write(|w| w.tasks_start().trigger());
   }
 
   fn update_ticks_per_sec(&mut self) {
-    self.ticks_per_sec = 230.0;
+    self.ticks_per_sec = 72.0;
     return;
 
     // while let Some(event) = self.next_event() {
@@ -391,6 +400,9 @@ fn setup_interrupt(nvic: &mut NVIC) {
     // NVIC::unmask(interrupt::PWM3);
 
     NVIC::unmask(interrupt::RTC0);
+
+    nvic.set_priority(interrupt::GPIOTE, 9);
+    NVIC::unmask(interrupt::GPIOTE);
   }
 }
 
@@ -420,7 +432,7 @@ fn setup_pwm(pwm: &RegisterBlock, buffer: &Cell<[u16; 4]>, speaker_pin: u32) {
   pwm.enable.write(|w| w.enable().enabled());
 
   // mode
-  pwm.mode.write(|w| w.updown().up());
+  pwm.mode.write(|w| w.updown().up_and_down());
 
   // pwm clock frequency
   pwm
@@ -474,6 +486,35 @@ fn note_to_buf(key: u8) -> [u16; 4] {
   [half_duty, half_duty, half_duty, countertop]
 }
 
+fn setup_buttons(gpiote: &GPIOTE, buttons: &[Pin<Input<Floating>>; 2]) {
+  // enable gpio event for button a
+  gpiote.config[0].write(|w| unsafe {
+    w.mode()
+      .event()
+      .psel()
+      .bits(buttons[0].pin())
+      .polarity()
+      .hi_to_lo()
+      .outinit()
+      .low()
+  });
+
+  // enable gpio event for button b
+  gpiote.config[1].write(|w| unsafe {
+    w.mode()
+      .event()
+      .psel()
+      .bits(buttons[1].pin())
+      .polarity()
+      .hi_to_lo()
+      .outinit()
+      .low()
+  });
+
+  // enable interrupt
+  gpiote.intenset.write(|w| w.in0().set().in1().set());
+}
+
 #[interrupt]
 fn RTC0() {
   free(|cs| {
@@ -487,5 +528,28 @@ fn RTC0() {
       .write(|w| w.events_tick().clear_bit());
 
     app.step();
+  });
+}
+
+#[interrupt]
+fn GPIOTE() {
+  free(|cs| {
+    let mut borrowed = APP.borrow(cs).borrow_mut();
+    let app = borrowed.as_mut().unwrap();
+    let gpiote = &app.peripherals.gpiote;
+
+    // button a pressed
+    if gpiote.events_in[0].read().bits() != 0 {
+      gpiote.events_in[0].write(|w| w.events_in().clear_bit());
+      *app.notes[0].get_or_insert(60) += 1;
+      app.update_seq(0);
+    }
+
+    // button b pressed
+    if gpiote.events_in[1].read().bits() != 0 {
+      gpiote.events_in[1].write(|w| w.events_in().clear_bit());
+      *app.notes[0].get_or_insert(60) -= 1;
+      app.update_seq(0);
+    }
   });
 }
