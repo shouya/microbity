@@ -71,6 +71,114 @@ I implemented two timers (4s and 1/4s) with a single TIMER peripheral by exploit
 
 I learned about this peripheral by browsing through nrf reference manual doc. It's often the case the programmer wants to wire up a task of a peripheral to an event of another peripheral. This is where PPI comes in. I used it to connect up one of the TIMER's COMPARE event to the TEMP's START task. So I don't have to manually start the TEMP measurement in the interrupt handler.
 
+** PCM audio player
+
+(Enable feature =app_pcm_player= to build the PCM audio player demo.)
+
+This demo is plays back a 5-second segment of [[https://en.wikipedia.org/wiki/Bad_Apple!!][Bad Apple!!]] via the speaker. I was trying to see how exact a sound is generated.
+
+I learned:
+
+- how to use PWM to generate a square wave of desired frequency
+- how duty cycle works
+- how is the sound produced
+- how to use double buffering to play audio
+
+For the audio sample, I converted an audio file to raw format (mono, 16kHz, u8) and stored in a const array. Then I set the PWM to generate a square wave at a frequency  equal to the sample rate. Then, decode the raw audio data by filling the PWM's sequencer buffer with duty-cycle values proportional to the magnitude of audio samples. Finally, run PWM sequence and output to the speaker pin.
+
+*** Discoveries
+**** Low sample rate sanity check
+
+Earlier in the project, I was pondering at what frequency/sample rate I was expected to play the audio. Using a lower sample rate means I can play longer audios. However, the lowest preset sample rate in Audacity is only at 8kHz. How do I know if the audio is still recognizable at lower sample rate, e.g. 3kHz?
+
+So what I did was to convert an audio file to the raw samples, then convert the raw samples to wav and try play it. The result I found is that 3kHz is already good enough in quality.
+
+**** Audacity is useful for debugging
+
+I don't know much about how to use Audacity. But it's been proven useful in debugging my program by allowing me to measure the actual audio frequency of the noise produced by the speaker in the spectrogram. By knowing the frequency I can make educated guess about what constant values may be causing it to produce that frequency.
+
+**** How PWM works
+
+It's actually similar to a TIMER. There is a counter that increases at a rate specified by the PRESCALER. Then there is a COUNTERTOP register that at what value the counter is reset to zero. The user need to set a COMPARE register similar to the CC register of a TIMER. When COMPARE < COUNTER, the PWM output is high. Otherwise, it's low. A major difference is that the COMPARE value is decoded from a sequence buffer in memory.
+
+**** Duty cycle is a clumsy way to simulate a DAC
+
+The nRF52833 MCU doesn't have a DAC peripheral. But the speaker is better driven using analog signal.
+
+From my understanding, it should be possible to simulate an analog signal by using PWM with a high frequency and varying the duty cycle. Varying duty cycles can be thought of as changing the average voltage in small periods.
+
+In my first versions I try to play the audio at a sample rate equal to the resonant frequency of the speaker (2.7kHz). It sort of works but was very noisy. It's impossible to hear any details beside the beats.
+
+In reality, this seem to work but you need a very high frequency to make it work. Anywhere close to the resonant frequency of the speaker is not going to work - where the period of the duty cycle is picked up instead.
+
+**** Repeat each sample to smooth out the signal
+
+Even though now the audio is played at 16kHz, it's still not high enough to produce good sound, likely due to frequency too close to the resonance frequency.
+
+A way I found to increase the frequency to a higher value is to repeat each sample many times. There is a trade off, though. If the repetition is too high, which means the frequency is too high, then the audio will get too quiet. I found at a sample rate of 16kHz, repeating each sample around 4 times to be good, which is effectively 64kHz.
+
+**** Double buffer
+
+After the buffer is played out, we need to decode the audio data into the buffer. This takes time. During the decoding time the speaker will be silent, this could result in a choppy audio.
+
+A way around this is to have two buffers. Then we play the first buffer. When the first buffer is played out, we play the second buffer. While the second buffer is being played, we fill the first buffer with new audio data. So when the second buffer is played out, the first buffer is ready to be played. Same goes for the second buffer.
+
+*** Challenges
+
+**** Too quiet
+
+Currently, the played audio is way quieter than I hope for. You have to hold your ear near to the speaker to hear the sound.
+
+From what I understand, in this case you need to increase the amplitude the speaker vibrates at. But here all I was dealing with are the duty cycles. The high frequency signal produced, according to my understanding, tends to approximate an analog signal equivalent to the square wave averaged over a small time period. The sample values tend to average out to close to the natural position. This means the amplitude, determined by the speaker's membrane movement, is also small.
+
+I tried to apply a gain by multiplying the sample values by a constant. But it doesn't seem to work. I think it's due to the averaging effect - even though the values are more extreme, the average is still the same. (e.g. [-1, 1] vs [-10, 10] both averages to 0).
+
+My guess is that it may be possible to solve the problem by finding an optimal frequency to drive the speaker at. But I have no clue how to do that.
+
+** MIDI player
+
+(Enable feature =app_midi_player= to build the MIDI player demo.)
+
+This demo plays back a MIDI file via the speaker. The main reason is because I found playing raw PCM audio to be too costly in terms of memory. A MIDI file is much smaller. I was also curious how MIDI works.
+
+Although it seem like similar to the PCM audio player project, I used very different way to control the PWM peripheral. Now I simply use PWM waveform decoder mode to generate the frequency of a note by varying the COUTNERTOP. Then the note is repeated indefinitely by shorting LOOPSDONE event with SEQSTART task.
+
+On top of this, I used four PWM peripherals to support playing four notes at the same time. At least that's what I hope. In reality, the playback of multiple notes at the same time is also not functioning - I reckon when the speaker pin is gets input of both high and low it could be just like shorting the VCC and GND pin. According to my hypothesis, if I can drive the speaker with an analog signal, then these signals may add up and producing the desired sound. But I have no way to test that.
+
+This project is a complete failure. The actual audio frequency the speaker produced is completely out of place. I think it could be caused by the PWM always outputting square waves, which is actually composed of many frequencies, and the speaker's resonance profile makes some of these frequencies more pronounced than actual note's frequency.
+
+*** Discoveries
+
+**** The MIDI format
+
+In the simplest words, the MIDI format contains the information about the tick rate, which is the timing unit used by the event stream. Then there is a time-coded stream of events. Each event is a message that encodes two types, note on and note off. Each note on/off message contains the note number and the velocity corresponding to the amplitude.
+
+Of course there are more nuances to just this. For example, there is the concept of multiple parallel event streams and channels.
+
+I can think of the benefit of this format is that hardware MIDI is very simple to implement. Adjusting the tempo will be as simple as changing the tick rate. And all it does is to send note on/off messages to the synthesizer.
+
+**** MIDI timing
+
+I still haven't figure out how to calculate the tick rate accurately. There seem to be two types of ways to specify the tick rate. And to make things more complex, the tick rate can change in the middle of the event stream. Currently I just hard-code the tick rate to the desired value according to the sample midi file I have.
+
+** Tone generator
+
+(Enable feature =app_tone= to build the tone generator demo.)
+
+Finding the MIDI player a complete fiasco, I decided to try something simpler - produce pure tones. This demo shows how to generate a pure tone of a desired frequency.
+
+A pure tone is a sine wave. So I generated a high frequency signal to simulate analog signal by varying the duty cycle. I use PWM to simply plays the buffer of samples generated on the fly. The buffer contains the advancing portion of a sine wave at desired frequency.
+
+*** Discoveries
+
+**** Beware of moves
+
+I spent one whole day debugging an issue where the audio generated is unrelated to the tone. Later I found at the =fill_buffer= function doesn't actually change the buffer. Thinking it was caused by faulty interaction between =fill_buffer= and DMA access due to staled write cache, I spend another few hours on trying to disable the cache - only later found that cortex m4 doesn't even have cache.
+
+Eventually I found the cause. In this project, trying to make the code more modular, I placed the buffer inside the App state. Then I initialized the App, set up the peripherals (including PWM), and then moved the App inside a global static variable for use in the interrupt handler. The problem is that the buffer is moved at this step, so the PTR to buffer for PWM configured during setup becomes invalid.
+
+I think =core::pin::Pin= may be useful in preventing this kind of mistake at compile time, but I don't know how to do it. I looked around the internet and find no source that explains how it can be applied in this scenario for embedded programming.
+
 * Reference materials
 
 Rust:
@@ -100,9 +208,8 @@ CPU and MUC:
 Peripherals:
 
 - [[https://www.digikey.com/en/products/detail/knowles/SPU0410LR5H-QB/2420974][SPU0410LR5H-QB Knowles | Audio Products | DigiKey]] (microphone)
-- [[https://datasheet.lcsc.com/szlcsc/1811151451_Jiangsu-Huaneng-Elec-MLT-8530_C94599.pdf][JIANGSU HUANENG MLT-8530]] (speaker)
+- [[https://www.digikey.com/en/htmldatasheets/production/5584767/0/0/1/107020109][JIANGSU HUANENG MLT-8530]] (speaker)
 
 * Useful links
 
-- [[https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-low-pass-and-high-pass-filter][RC, RL, LC Passive Filter Calculator | DigiKey Electronics]] (for calculating the cut
-off frequency of the speaker)
+- [[https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-low-pass-and-high-pass-filter][RC, RL, LC Passive Filter Calculator | DigiKey Electronics]] (for calculating the cut-off frequency of the speaker)
