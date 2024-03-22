@@ -25,4 +25,6 @@ fn main() -> ! {
   app::pcm_player::play();
   #[cfg(feature = "app_midi_player")]
   app::midi_player::play();
+  #[cfg(feature = "app_tone_generator")]
+  app::tone_generator::play();
 }
