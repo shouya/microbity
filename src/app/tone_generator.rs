@@ -19,8 +19,8 @@ const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 const PWM_COUNTER_TOP: u16 = (PWM_CLOCK_FREQ / SAMPLE_RATE) as u16;
 
-const SAMPLE_RATE: u32 = 160000;
-const BUFFER_SIZE: usize = 512;
+const SAMPLE_RATE: u32 = 200000;
+const BUFFER_SIZE: usize = 64;
 
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
 
@@ -70,7 +70,7 @@ const EXP2_ONE_TWELFTH: f32 = 1.0594631;
 impl NoteGen {
   fn new() -> Self {
     Self {
-      note: 64,
+      note: 60,
       volume: 127,
       offset: 0,
       buffers: [[0; BUFFER_SIZE]; 2],
@@ -94,14 +94,12 @@ impl NoteGen {
 
     #[allow(clippy::needless_range_loop)]
     for i in 0..BUFFER_SIZE {
-      let t = ((self.offset + i) % period) as f32 / period as f32;
+      let phase = ((self.offset + i) % period) as f32 / period as f32;
 
-      // allowed because f32::consts doesn't exist in no_std
-      #[allow(clippy::approx_constant)]
-      let x = 2.0 * 3.14159 * t;
-      let y = (x.sin() + 1.0) / 2.0;
-      buffer[i] = (y * vol * (PWM_COUNTER_TOP as f32)) as u16;
-      // rprintln!("{} ({}): sin({}) -> {} ({})", i, t, x, y, buffer[i]);
+      let amplitude = sine_waveform(phase);
+
+      buffer[i] = (amplitude * vol * (PWM_COUNTER_TOP as f32)) as u16;
+      // rprintln!("{} ({}): sin({}) -> {} ({})", i, phase, x, y, buffer[i]);
     }
 
     self.offset = (self.offset + BUFFER_SIZE) % period;
@@ -130,7 +128,14 @@ struct App {
 
 impl App {
   fn new() -> Self {
-    let mut board = Board::take().unwrap();
+    let board = Board::take().unwrap();
+
+    // board
+    //   .SYST
+    //   .set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
+    // board.SYST.set_reload(200000);
+    // board.SYST.clear_current();
+    // board.SYST.enable_counter();
 
     Self {
       peripherals: Peripherals::take(board),
@@ -161,14 +166,14 @@ impl App {
 
     let buf_ptr = self.note_gen.buffers[0].as_ptr() as u32;
     pwm.seq0.ptr.write(|w| unsafe { w.bits(buf_ptr) });
-    pwm.seq0.refresh.write(|w| w.cnt().continuous());
     pwm.seq0.cnt.write(|w| unsafe { w.cnt().bits(buf_len) });
+    pwm.seq0.refresh.write(|w| w.cnt().continuous());
     pwm.seq0.enddelay.write(|w| unsafe { w.bits(0) });
 
     let buf_ptr = self.note_gen.buffers[1].as_ptr() as u32;
     pwm.seq1.ptr.write(|w| unsafe { w.bits(buf_ptr) });
-    pwm.seq1.refresh.write(|w| w.cnt().continuous());
     pwm.seq1.cnt.write(|w| unsafe { w.cnt().bits(buf_len) });
+    pwm.seq1.refresh.write(|w| w.cnt().continuous());
     pwm.seq1.enddelay.write(|w| unsafe { w.bits(0) });
 
     pwm
@@ -215,7 +220,7 @@ impl App {
   fn setup_interrupt(&mut self) {
     let nvic = &mut self.peripherals.nvic;
     unsafe {
-      nvic.set_priority(interrupt::PWM0, 1);
+      nvic.set_priority(interrupt::PWM0, 10);
       NVIC::unmask(interrupt::PWM0);
 
       nvic.set_priority(interrupt::GPIOTE, 1);
@@ -224,6 +229,7 @@ impl App {
   }
 
   fn start(&mut self) {
+    self.note_gen.set_note(69);
     self.restart_sequence();
   }
 
@@ -245,6 +251,7 @@ impl App {
     let pwm = &self.peripherals.pwm;
 
     if pwm.events_seqend[0].read().bits() != 0 {
+      // rprintln!("seqend0");
       pwm.events_seqend[0].write(|w| w.events_seqend().clear_bit());
       pwm.tasks_seqstart[1].write(|w| w.tasks_seqstart().trigger());
       self.note_gen.fill_buffer(0);
@@ -252,6 +259,7 @@ impl App {
     }
 
     if pwm.events_seqend[1].read().bits() != 0 {
+      // rprintln!("seqend1");
       pwm.events_seqend[1].write(|w| w.events_seqend().clear_bit());
       pwm.tasks_seqstart[0].write(|w| w.tasks_seqstart().trigger());
       self.note_gen.fill_buffer(1);
@@ -267,7 +275,6 @@ impl App {
     if gpiote.events_in[0].read().bits() != 0 {
       gpiote.events_in[0].write(|w| w.events_in().clear_bit());
 
-      // self.note_gen.note = self.note_gen.note.saturating_add(1);
       self.note_gen.set_note(self.note_gen.note.saturating_add(1));
       self.restart_sequence();
 
@@ -277,7 +284,6 @@ impl App {
     if gpiote.events_in[1].read().bits() != 0 {
       gpiote.events_in[1].write(|w| w.events_in().clear_bit());
 
-      // self.note_gen.note = self.note_gen.note.saturating_sub(1);
       self.note_gen.set_note(self.note_gen.note.saturating_sub(1));
       self.restart_sequence();
 
@@ -289,12 +295,17 @@ impl App {
 }
 
 pub fn play() -> ! {
-  let mut app = App::new();
-  app.setup();
-  app.start();
+  let app = App::new();
 
   free(|cs| {
     APP.borrow(cs).replace(Some(app));
+  });
+
+  free(|cs| {
+    let mut borrowed = APP.borrow(cs).borrow_mut();
+    let app = borrowed.as_mut().unwrap();
+    app.setup();
+    app.start();
   });
 
   loop {
@@ -318,4 +329,17 @@ fn PWM0() {
     let app = borrowed.as_mut().unwrap();
     app.handle_pwm_seqend();
   });
+}
+
+// input: [0, 1], output: [0, 1]
+// allowed because f32::consts doesn't exist in no_std
+#[allow(unused)]
+#[allow(clippy::approx_constant)]
+fn sine_waveform(phase: f32) -> f32 {
+  ((2.0 * 3.14159 * phase).sin() + 1.0) * 0.5
+}
+
+#[allow(unused)]
+fn trig_waveform(phase: f32) -> f32 {
+  (0.5 - (phase - 0.5).abs()) * 2.0
 }
