@@ -35,7 +35,7 @@ The SAADC works by sampling the analog voltage of an input pin in a short period
 
 (Enable feature =app_temp= to build the temperature demo.)
 
-This demo shows the temperature reading and show the number in text scrolling on the LED matrix. From this demo I learned:
+This demo shows the temperature reading and show the number in digits scrolling over the LED matrix. From this demo I learned:
 
 - how to read from TEMP peripheral
 - how to setup interrupts
@@ -57,43 +57,48 @@ Periodically, the four-second timer triggers the TEMP peripheral to start a temp
 
 **** Temp measurement isn't instantaneous
 
-The temperature reading isn't just what you can read directly off a register. First, one must trigger a measurement task, and then wait for the data to become ready.
+The temperature reading isn't just what you can read directly off a register. First, the user must trigger a measurement task of the TEMP peripheral, and then wait for the data to become ready. Only then the user can read the data.
+
+**** Fixed integer
+
+How do you represent a value between a small range but with decimals? Instead of using floating pointer perhaps you can just encode it in a fixed integer by agreeing on the number of bits reserved for decimals. I knew about a similar encoding approach when playing with DHT20 previously. But here from the Temp's HAL API I learned about the [[https://docs.rs/fixed][fixed]] library, which uses a type-level annotation to indicate the number of bits reserved for decimals, such that it has no runtime overhead.
 
 **** You need to clear the event flag
 
-I debugged a problem where the timer just keep sending interrupts nonstop. Then I learned that the event register must be cleared after the event is handled.
+I debugged a problem where it seems the timer just keep sending interrupts nonstop. Then I learned that the event register must be cleared after the event is handled.
 
 This makes sense, because otherwise any interrupt would be lost if the interrupt raise in a critical section. So the programmer is expected to clear the event flag after it's been handled.
 
-**** One Timer peripheral can function as several timers
+**** One TIMER peripheral can function as several timers
 
-The timer works by having an internal counter increasing at a rate specified by its PRESCALER (e.g. 16MHz). Then, there are several CC registers. And a COMPARE event is triggered when the counter reaches the value in each CC register.
+The timer works by having an internal counter increasing at a rate specified by its PRESCALER (e.g. 16MHz). Then, there are several CC registers set by the user. Each CC register triggers a COMPARE event when the counter reaches the CC value.
 
-I implemented two timers (4s and 1/4s) with a single TIMER peripheral by exploiting the CC registers. First, each CC register is set according to the triggering time. Then, in each timer COMPARE event is triggered, in addition to performing the task, I set the CC register to the next triggering time. So it will trigger the another COMPARE event later at the desired time.
+If you want to set multiple recurrent timers, set the interval values to the CC registers. Then in the interrupt handler, determine which CC register triggered the COMPARE event, and add the interval to the CC register to set the next triggering time.
+
+I implemented two timers (4s and 1/4s) with a single TIMER peripheral by exploiting this approach.
 
 **** PPI
 
-I learned about this peripheral by browsing through nrf reference manual doc. It's often the case the programmer wants to wire up a task of a peripheral to an event of another peripheral. This is where PPI comes in. I used it to connect up one of the TIMER's COMPARE event to the TEMP's START task. So I don't have to manually start the TEMP measurement in the interrupt handler.
+The programmer often wants to wire up an event of a peripheral to an task of another peripheral. This is where PPI can help. I used it to connect up the TIMER's COMPARE event to the TEMP's START task to start a measurement every 4 seconds. This way I don't have to manually start the TEMP measurement in the interrupt handler.
 
 ** PCM audio player
 
 (Enable feature =app_pcm_player= to build the PCM audio player demo.)
 
-This demo is plays back a 5-second segment of [[https://en.wikipedia.org/wiki/Bad_Apple!!][Bad Apple!!]] via the speaker. I was trying to see how exact a sound is generated.
+This demo plays back a 5-second segment of [[https://en.wikipedia.org/wiki/Bad_Apple!!][Bad Apple!!]] via the speaker. I was trying to play around audio generated.
 
-I learned:
+From the project I learned:
 
-- how to use PWM to generate a square wave of desired frequency
+- how to use Pulse-width modulation (PWM) peripheral to generate a square wave of desired frequency
 - how duty cycle works
-- how is the sound produced
-- how to use double buffering to play audio
+- how to drive the speaker to produce sound
 
-For the audio sample, I converted an audio file to raw format (mono, 16kHz, u8) and stored in a const array. Then I set the PWM to generate a square wave at a frequency  equal to the sample rate. Then, decode the raw audio data by filling the PWM's sequencer buffer with duty-cycle values proportional to the magnitude of audio samples. Finally, run PWM sequence and output to the speaker pin.
+For the audio sample, I converted an audio file to raw format (mono, 16kHz, u8) and stored it in a const array via =include_bytes=. Then I set the PWM to generate a square wave at a frequency equal to the sample rate. Then, have the PWM decode the raw audio data by filling the buffer with duty-cycle values proportional to the magnitude of audio samples. Finally, start PWM sequence playback, which will output the signal to the speaker pin.
 
 *** Discoveries
 **** Low sample rate sanity check
 
-Earlier in the project, I was pondering at what frequency/sample rate I was expected to play the audio. Using a lower sample rate means I can play longer audios. However, the lowest preset sample rate in Audacity is only at 8kHz. How do I know if the audio is still recognizable at lower sample rate, e.g. 3kHz?
+When starting the project, I pondered about what frequency/sample rate I should play the audio. If I use a lower sample rate, I can play the audio for longer. However, the lowest preset sample rate in Audacity is only at 8kHz. How do I know if the audio is still resolvable at lower sample rate like 3kHz?
 
 So what I did was to convert an audio file to the raw samples, then convert the raw samples to wav and try play it. The result I found is that 3kHz is already good enough in quality.
 
@@ -117,63 +122,64 @@ In reality, this seem to work but you need a very high frequency to make it work
 
 **** Repeat each sample to smooth out the signal
 
-Even though now the audio is played at 16kHz, it's still not high enough to produce good sound, likely due to frequency too close to the resonance frequency.
+Even though now the audio is played at 16kHz, it's still not high enough to produce a clear sound, which is likely due to frequency (or harmonics of that) being too close to the resonance frequency.
 
-A way I found to increase the frequency to a higher value is to repeat each sample many times. There is a trade off, though. If the repetition is too high, which means the frequency is too high, then the audio will get too quiet. I found at a sample rate of 16kHz, repeating each sample around 4 times to be good, which is effectively 64kHz.
+I found that a way to increase the frequency to a higher value is to repeat each sample many times. There is a trade off, though. If the number of repetition is too high, which means the frequency gets too high too, then the audio will get too quiet. I found at a sample rate of 16kHz, repeating each sample around 4 times seems to be a nice balance, which effectively corresponds to 64kHz.
 
 **** Double buffer
 
-After the buffer is played out, we need to decode the audio data into the buffer. This takes time. During the decoding time the speaker will be silent, this could result in a choppy audio.
+After the buffer is played out, we need to decode more the audio data into the buffer, which takes time. During the decoding time the speaker will be silent, this could result in the audio being choppy.
 
-A way around this is to have two buffers. Then we play the first buffer. When the first buffer is played out, we play the second buffer. While the second buffer is being played, we fill the first buffer with new audio data. So when the second buffer is played out, the first buffer is ready to be played. Same goes for the second buffer.
+A way around this problem is to have two buffers. First we play the first buffer. When the first buffer is played out, we play the second buffer. While the second buffer is being played (PWM is doing the work, whereas CPU is free), we fill the first buffer with new audio data. So when the second buffer is played out, the first buffer is ready to be played. Same goes for the second buffer.
 
-*** Challenges
-
+*** Unsolved problem
 **** Too quiet
 
-Currently, the played audio is way quieter than I hope for. You have to hold your ear near to the speaker to hear the sound.
+Currently, the played audio is way quieter than I hope for. I have to hold my ear near to the speaker to hear the sound.
 
-From what I understand, in this case you need to increase the amplitude the speaker vibrates at. But here all I was dealing with are the duty cycles. The high frequency signal produced, according to my understanding, tends to approximate an analog signal equivalent to the square wave averaged over a small time period. The sample values tend to average out to close to the natural position. This means the amplitude, determined by the speaker's membrane movement, is also small.
+From what I understand, in this case you need to increase the vibration amplitude of the speaker's membrane. But here all I was dealing with are the duty cycles. The high frequency signal PWM produced, according to my understanding, tends to approximate an analog signal at lower time resolutions. In an analog audio signal, The sample values tend to average out to close to the natural position. This means the amplitude, determined by the speaker's membrane movement, is also small.
 
-I tried to apply a gain by multiplying the sample values by a constant. But it doesn't seem to work. I think it's due to the averaging effect - even though the values are more extreme, the average is still the same. (e.g. [-1, 1] vs [-10, 10] both averages to 0).
+I tried to apply a gain by multiplying the sample values by a constant. But it doesn't seem to work out as expected. I think it's due to the same averaging effect - even though the values are more extreme, the average is still the same. For example, [-1, 1] and [-10, 10] both average to 0 even though one has higher amplitude.
 
-My guess is that it may be possible to solve the problem by finding an optimal frequency to drive the speaker at. But I have no clue how to do that.
+My guess is that it may be possible to solve the problem by finding an optimal frequency to drive the speaker at. But I have no clue how to find it.
 
 ** MIDI player
 
 (Enable feature =app_midi_player= to build the MIDI player demo.)
 
-This demo plays back a MIDI file via the speaker. The main reason is because I found playing raw PCM audio to be too costly in terms of memory. A MIDI file is much smaller. I was also curious how MIDI works.
+This demo plays back a MIDI file via the speaker. The main motivation for this project is that I found raw PCM audio too huge for the abysmal ROM space. A MIDI file is much smaller. I was also curious how MIDI works.
 
-Although it seem like similar to the PCM audio player project, I used very different way to control the PWM peripheral. Now I simply use PWM waveform decoder mode to generate the frequency of a note by varying the COUTNERTOP. Then the note is repeated indefinitely by shorting LOOPSDONE event with SEQSTART task.
+Although it seem similar to the PCM audio player project, I used very different way to control the PWM. For this project I simply generate a square wave at the frequency of the note. I did it by using by varying the COUTNERTOP. Then the note is repeated indefinitely by shorting LOOPSDONE event with SEQSTART task.
 
-On top of this, I used four PWM peripherals to support playing four notes at the same time. At least that's what I hope. In reality, the playback of multiple notes at the same time is also not functioning - I reckon when the speaker pin is gets input of both high and low it could be just like shorting the VCC and GND pin. According to my hypothesis, if I can drive the speaker with an analog signal, then these signals may add up and producing the desired sound. But I have no way to test that.
+On top of this, I used all four PWM peripherals to support playing four notes at the same time. At least that's what I hoped. In reality, the playback of multiple notes at the same time is not functioning at all - I reckon when the speaker output pin gets a value of both high and low it could be just like shorting the VCC and GND, so no current flows through the speaker. According to my hypothesis, if I can drive the speaker with an analog signal, then these signals may add up and producing the desired sound. But I have no way to test that.
 
-This project is a complete failure. The actual audio frequency the speaker produced is completely out of place. I think it could be caused by the PWM always outputting square waves, which is actually composed of many frequencies, and the speaker's resonance profile makes some of these frequencies more pronounced than actual note's frequency.
+This project is a complete failure. The actual audio frequencies the speaker produced of a note is completely out of place. I think it could be caused by the PWM always outputting square waves, which is actually composed of many frequencies, and the speaker's resonance profile makes some of these frequencies more pronounced than actual note's frequency.
 
 *** Discoveries
 
 **** The MIDI format
 
-In the simplest words, the MIDI format contains the information about the tick rate, which is the timing unit used by the event stream. Then there is a time-coded stream of events. Each event is a message that encodes two types, note on and note off. Each note on/off message contains the note number and the velocity corresponding to the amplitude.
+In simplest words, the MIDI is about playing back events in a progressing time. The time is tracked by ticks, which increment at a designated tick rate. Then there is a time-coded stream of events. Each event is a message that encodes two types, note on and note off. Each note on/off message contains the note number and the velocity corresponding to the amplitude.
 
 Of course there are more nuances to just this. For example, there is the concept of multiple parallel event streams and channels.
+
+Note that there is no way to knowing a note's length before the note off message is received. This means it's impractical to fill the buffer and repetition time in advance.
 
 I can think of the benefit of this format is that hardware MIDI is very simple to implement. Adjusting the tempo will be as simple as changing the tick rate. And all it does is to send note on/off messages to the synthesizer.
 
 **** MIDI timing
 
-I still haven't figure out how to calculate the tick rate accurately. There seem to be two types of ways to specify the tick rate. And to make things more complex, the tick rate can change in the middle of the event stream. Currently I just hard-code the tick rate to the desired value according to the sample midi file I have.
+I still haven't figure out how to calculate the tick rate accurately. There seem to be two types of ways to specify the tick rate. And to make things more complex, the tick rate can vary in the middle of course. Currently I just hard-code the tick rate to the desired value according to the sample midi file I have.
 
 ** Tone generator
 
-(Enable feature =app_tone= to build the tone generator demo.)
+(Enable feature =app_tone_generator= to build the tone generator demo.)
 
-Finding the MIDI player a complete fiasco, I decided to try something simpler - produce pure tones. This demo shows how to generate a pure tone of a desired frequency.
+Finding the MIDI player project a complete fiasco, I decided to try something simpler - produce pure tones. This demo shows how to generate a pure tone of a desired frequency.
 
 A pure tone is a sine wave. So I generated a high frequency signal to simulate analog signal by varying the duty cycle. I use PWM to simply plays the buffer of samples generated on the fly. The buffer contains the advancing portion of a sine wave at desired frequency.
 
-*** Discoveries
+*** Discovery
 
 **** Beware of moves
 
@@ -181,7 +187,14 @@ I spent one whole day debugging an issue where the audio generated is unrelated 
 
 Eventually I found the cause. In this project, trying to make the code more modular, I placed the buffer inside the App state. Then I initialized the App, set up the peripherals (including PWM), and then moved the App inside a global static variable for use in the interrupt handler. The problem is that the buffer is moved at this step, so the PTR to buffer for PWM configured during setup becomes invalid.
 
-I think =core::pin::Pin= may be useful in preventing this kind of mistake at compile time, but I don't know how to do it. I looked around the internet and find no source that explains how it can be applied in this scenario for embedded programming.
+I think =core::pin::Pin= may be useful in preventing this kind of mistake at compile time, but I don't know how to do it. I looked around the internet and find no source that explains how it can be applied in scenario like this.
+
+* How to run the demos
+
+- Install [[https://probe.rs/docs/tools/probe-rs/][probe-rs]]
+- Install toolchain for target thumbv7em-none-eabihf
+- Run =cargo run= (or =cargo run --no-default-features --features <demo>= to run a specific demo)
+
 
 * Reference materials
 
