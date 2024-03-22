@@ -2,6 +2,75 @@
 
 This project contains my experimental code for bare metal programming the micro:bit in Rust.
 
+* Demos
+
+** LED matrix
+
+The feature was implemented in the library under =raw::led=. This library provides a simple API to display a pattern on the LED matrix.
+
+*** Discovery
+I was puzzled how it's possible to control 25 LEDs with only 10 pins. Here's how it works: five pins controls the rows and five pins controls the columns. Each LED is lit up when the row pin and the column pin are both high. The ability to show different patterns on the LED matrix is an illusion. In reality, each row's pin is set to high one at a time. For each row, the corresponding column pins are set to high to light up the LEDs in that row. The illusion of showing different patterns is achieved by quickly switching between rows. This works because human vision can't pick up the flickering of such high frequency. It's the same reason how movie works. See [[https://en.wikipedia.org/wiki/Flicker_fusion_threshold][Flicker fusion threshold - Wikipedia]].
+
+I also used a timer internally to make sure the timing is exact.
+
+** Serial
+
+This is a simple interface encapsulating the UarteRx and UarteTx HAL. It provides an API to send a string through the serial interface by writing the bytes one byte at a time. The bytes are passed to a buffer, which is consumed by UARTE via DMA.
+
+** Show volume
+
+(Enable feature =app_volume= to build the volume demo.)
+
+It shows the relative volume in the LED matrix. I was trying to learn how to use microphone to record audio signal in this demo.
+
+I learned how to use SAADC to sample the audio signal from the microphone pin. I used nrf52833-hal's Saadc for setting up the SAADC peripheral. The sampling was done manually.
+
+The SAADC works by averaging (or summing) up the high/low input of a floating input pin in a short period of time.
+
+** Show temperature
+
+(Enable feature =app_temp= to build the temperature demo.)
+
+This demo shows the temperature reading and show the number in text scrolling on the LED matrix. From this demo I learned:
+
+- how to read from TEMP peripheral
+- how to setup interrupts
+- how to use LED display non-blockingly
+- how timer works
+- how nrf's task/event system works
+  + and how to use PPI (Programmable Peripheral Interconnect) to connect events and tasks of peripherals
+
+Reading from TEMP peripheral is simple. Especially when I just used a HAL for the job. I additionally used three timers for the task:
+
+- one for the showing LED display internally
+  + this one I don't have to worry about, because it's handled by the microbit library
+- one for slowly triggering temperature reading every four seconds
+- one for scrolling the text on the LED matrix every 1/4 second
+
+Periodically, the four-second timer triggers the TEMP peripheral to start a temperature reading. When the reading is ready, the TEMP peripheral triggers an interrupt. In the interrupt handler, I read the temperature value and update a framebuffer of the pattern to be displayed. In addition, every 1/4 second, the timer triggers the LED matrix to scroll the text.
+
+*** Discoveries
+
+**** Temp measurement isn't instantaneous
+
+The temperature reading isn't just what you can read directly off a register. First, one must trigger a measurement task, and then wait for the data to become ready.
+
+**** You need to clear the event flag
+
+I debugged a problem where the timer just keep sending interrupts nonstop. Then I learned that the event register must be cleared after the event is handled.
+
+This makes sense, because otherwise any interrupt would be lost if the interrupt raise in a critical section. So the programmer is expected to clear the event flag after it's been handled.
+
+**** One Timer peripheral can function as several timers
+
+The timer works by having an internal counter increasing at a rate specified by its PRESCALER (e.g. 16MHz). Then, there are several CC registers. And a COMPARE event is triggered when the counter reaches the value in each CC register.
+
+I implemented two timers (4s and 1/4s) with a single TIMER peripheral by exploiting the CC registers. First, each CC register is set according to the triggering time. Then, in each timer COMPARE event is triggered, in addition to performing the task, I set the CC register to the next triggering time. So it will trigger the another COMPARE event later at the desired time.
+
+**** PPI
+
+I learned about this peripheral by browsing through nrf reference manual doc. It's often the case the programmer wants to wire up a task of a peripheral to an event of another peripheral. This is where PPI comes in. I used it to connect up one of the TIMER's COMPARE event to the TEMP's START task. So I don't have to manually start the TEMP measurement in the interrupt handler.
+
 * Reference materials
 
 Rust:
