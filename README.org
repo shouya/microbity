@@ -1,12 +1,39 @@
+* Microbit demos in Rust
+
+This project contains my experimental code for bare metal programming the micro:bit in Rust.
+
 * Reference materials
 
-- [[https://docs.rs/microbit-v2][microbit - Rust]]
+Rust:
+
+- [[https://docs.rs/microbit-v2][microbit - Rust]] (use the master branch, the latest release doesn't expose some peripherals)
+- [[https://docs.rs/nrf52833-hal/][nrf52833-hal - Rust]]
+- [[https://docs.rs/nrf52833-pac/][nrf52833-pac - Rust]]
+- [[https://docs.rs/cortex-m/][cortex-m - Rust]]
+- [[https://docs.rs/cortex-m-rt/][cortex-m-rt - Rust]]
+- [[https://docs.rs/micromath/][micromath - Rust]]
+- [[https://docs.rs/heapless][heapless - Rust]]
+
+Microbit:
+
 - [[https://tech.microbit.org/hardware/][Hardware Spec]]
-- [[https://tech.microbit.org/hardware/edgeconnector/#pins-and-signals][Edge Connector and Pinout]]
+- [[https://tech.microbit.org/hardware/edgeconnector/#pins-and-signals][Edge Connector and Pinout]] (or [[https://microbit.pinout.xyz/][pin:out]])
 - [[https://raw.githubusercontent.com/microbit-foundation/microbit-v2-hardware/main/V2.21/MicroBit_V2.2.1_nRF52820%20schematic.PDF][Schematics]]
 
-Parts:
+
+CPU and MUC:
 
 - [[https://www.nordicsemi.com/products/nrf52833][nRF52833 - Advanced Bluetooth multiprotocol SoC - nordicsemi.com]]
   + [[https://infocenter.nordicsemi.com/pdf/nRF52833_PS_v1.5.pdf][SoC specification]]
+- [[https://www.arm.com/-/media/Arm%20Developer%20Community/PDF/Processor%20Datasheets/Arm%20Cortex-M4%20Processor%20Datasheet.pdf][Arm Cortex-M4 Datasheet]]
+- [[https://documentation-service.arm.com/static/5f19da2a20b7cf4bc524d99a?token=][Cortex-M4 Technical Reference Manual]]
+
+Peripherals:
+
 - [[https://www.digikey.com/en/products/detail/knowles/SPU0410LR5H-QB/2420974][SPU0410LR5H-QB Knowles | Audio Products | DigiKey]] (microphone)
+- [[https://datasheet.lcsc.com/szlcsc/1811151451_Jiangsu-Huaneng-Elec-MLT-8530_C94599.pdf][JIANGSU HUANENG MLT-8530]] (speaker)
+
+* Useful links
+
+- [[https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-low-pass-and-high-pass-filter][RC, RL, LC Passive Filter Calculator | DigiKey Electronics]] (for calculating the cut
+off frequency of the speaker)
