@@ -213,7 +213,9 @@ Microbit:
 - [[https://tech.microbit.org/hardware/][Hardware Spec]]
 - [[https://tech.microbit.org/hardware/edgeconnector/#pins-and-signals][Edge Connector and Pinout]] (or [[https://microbit.pinout.xyz/][pin:out]])
 - [[https://raw.githubusercontent.com/microbit-foundation/microbit-v2-hardware/main/V2.21/MicroBit_V2.2.1_nRF52820%20schematic.PDF][Schematics]]
-
+- [[https://tech.microbit.org/][micro:bit developer community and technical resources]]
+- [[https://microbit-micropython.readthedocs.io/en/v1.0.1/index.html][BBC micro:bit MicroPython documentation]] - the microbit's micropython documentation is mid-level and rather complete
+  + [[https://github.com/bbcmicrobit/micropython][GitHub - bbcmicrobit/micropython]] - the source code is a treasure trove of reference implementations.
 
 CPU and MUC:
 
@@ -230,3 +232,4 @@ Peripherals:
 * Useful links
 
 - [[https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-low-pass-and-high-pass-filter][RC, RL, LC Passive Filter Calculator | DigiKey Electronics]] (for calculating the cut-off frequency of the speaker)
+- [[https://docs.rust-embedded.org/discovery/microbit/explore.html][Discover the world of microcontrollers through Rust!]] - A great tutorial on how to play with micro:bit in Rust. This "what's left for you to explore" chapter refers to a bunch of interesting topics.
