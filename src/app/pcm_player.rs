@@ -23,9 +23,9 @@ use rtt_target::rprintln;
 // -t 60: 60 seconds (make sure the file is not too large to fit in flash)
 const AUDIO_DATA: &[u8] = include_bytes!("../../assets/bad-apple.raw");
 // the sample rate of the audio data
-const DATA_SAMPLE_RATE: u32 = 16000;
+const DATA_SAMPLE_RATE: u32 = 7812;
 // the speaker's resonance frequency
-static TARGET_SAMPLE_RATE: AtomicU32 = AtomicU32::new(16000);
+static TARGET_SAMPLE_RATE: AtomicU32 = AtomicU32::new(31250);
 
 // the prescaler sets the PWM clock frequency.
 const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
@@ -34,7 +34,7 @@ const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 
 // each sample will be played REFRESH+1 times. This smooths out the sound.
-static PWM_REFRESH: AtomicU32 = AtomicU32::new(3);
+static PWM_REFRESH: AtomicU32 = AtomicU32::new(0);
 
 // make sure each sample to have duration TARGET_SAMPLE_RATE^-1
 // Since: sample duration = (PWM_CLOCK_FREQ / (PWM_COUNTERTOP * (1 + REFRESH)))^-1 = TARGET_SAMPLE_RATE^-1
