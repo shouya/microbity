@@ -6,7 +6,7 @@ use cortex_m::{
   peripheral::NVIC,
 };
 use microbit::{
-  hal::gpio::{Floating, Input, Level, Output, Pin, PushPull},
+  hal::gpio::{Input, Level, Output, Pin, PullUp, PushPull},
   pac::{interrupt, pwm0::prescaler::PRESCALER_A, GPIOTE, PWM0},
   Board,
 };
@@ -19,7 +19,7 @@ const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 const PWM_COUNTER_TOP: u16 = (PWM_CLOCK_FREQ / SAMPLE_RATE) as u16;
 
-const SAMPLE_RATE: u32 = 200000;
+const SAMPLE_RATE: u32 = 27399;
 const BUFFER_SIZE: usize = 64;
 
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
@@ -28,7 +28,7 @@ struct Peripherals {
   pwm: PWM0,
   nvic: NVIC,
   speaker_pin: Pin<Output<PushPull>>,
-  buttons: [Pin<Input<Floating>>; 2],
+  buttons: [Pin<Input<PullUp>>; 2],
   gpiote: GPIOTE,
 }
 
@@ -41,8 +41,8 @@ impl Peripherals {
       .into_push_pull_output(Level::Low)
       .degrade();
     let buttons = [
-      board.buttons.button_a.into_floating_input().degrade(),
-      board.buttons.button_b.into_floating_input().degrade(),
+      board.buttons.button_a.into_pullup_input().degrade(),
+      board.buttons.button_b.into_pullup_input().degrade(),
     ];
     let gpiote = board.GPIOTE;
 
@@ -96,7 +96,7 @@ impl NoteGen {
     for i in 0..BUFFER_SIZE {
       let phase = ((self.offset + i) % period) as f32 / period as f32;
 
-      let amplitude = sine_waveform(phase);
+      let amplitude = square_waveform(phase);
 
       buffer[i] = (amplitude * vol * (PWM_COUNTER_TOP as f32)) as u16;
       // rprintln!("{} ({}): sin({}) -> {} ({})", i, phase, x, y, buffer[i]);
@@ -230,16 +230,10 @@ impl App {
 
   fn start(&mut self) {
     self.note_gen.set_note(69);
-    self.restart_sequence();
+    self.start_sequence();
   }
 
-  fn restart_sequence(&mut self) {
-    self
-      .peripherals
-      .pwm
-      .tasks_stop
-      .write(|w| w.tasks_stop().trigger());
-
+  fn start_sequence(&mut self) {
     self.note_gen.fill_buffer(0);
     self.note_gen.fill_buffer(1);
 
@@ -276,8 +270,6 @@ impl App {
       gpiote.events_in[0].write(|w| w.events_in().clear_bit());
 
       self.note_gen.set_note(self.note_gen.note.saturating_add(1));
-      self.restart_sequence();
-
       return;
     }
 
@@ -285,8 +277,6 @@ impl App {
       gpiote.events_in[1].write(|w| w.events_in().clear_bit());
 
       self.note_gen.set_note(self.note_gen.note.saturating_sub(1));
-      self.restart_sequence();
-
       return;
     }
 
@@ -342,4 +332,13 @@ fn sine_waveform(phase: f32) -> f32 {
 #[allow(unused)]
 fn trig_waveform(phase: f32) -> f32 {
   (0.5 - (phase - 0.5).abs()) * 2.0
+}
+
+#[allow(unused)]
+fn square_waveform(phase: f32) -> f32 {
+  if phase < 0.5 {
+    0.1
+  } else {
+    0.9
+  }
 }
