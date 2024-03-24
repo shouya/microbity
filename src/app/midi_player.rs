@@ -18,8 +18,8 @@ use rtt_target::rprintln;
 // http://www.jsbach.net/midi/midi_artoffugue.html
 const MIDI_DATA: &[u8] = include_bytes!("../../assets/1080-c01.mid");
 
-const BUFFER_SIZE: usize = 8;
-const SAMPLE_RATE: u32 = 27399;
+const BUFFER_SIZE: usize = 16;
+const SAMPLE_RATE: u32 = 16387;
 
 // the prescaler sets the PWM clock frequency.
 const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
@@ -300,18 +300,24 @@ impl AppState {
     let buffer = &mut self.buffers[buffer_idx];
     let dt = 1.0 / SAMPLE_RATE as f32;
 
+    let mut period = 0.0;
+    if let Some(highest_note) = self.notes.iter().filter_map(|n| *n).max() {
+      period = key_to_period(highest_note);
+    }
+
     #[allow(clippy::needless_range_loop)]
     for i in 0..BUFFER_SIZE {
-      let t = self.timestamp + i as f32 * dt;
-
-      let mut amplitude = 0.0;
-      for note in self.notes.iter().filter_map(|n| *n) {
-        let period = 1.0 / key_to_freq(note);
-        let phase = (t / period).fract();
-        amplitude += self.waveform.sample(phase);
+      if period == 0.0 {
+        buffer[i] = 0;
+        continue;
       }
 
-      let v = (amplitude.clamp(-2.0, 2.0) + 2.0) / 2.0;
+      let t = self.timestamp + i as f32 * dt;
+
+      let phase = (t / period).fract();
+      let amplitude = self.waveform.sample(phase);
+      let v = (amplitude.clamp(-1.0, 1.0) + 1.0) / 1.0;
+
       buffer[i] = (v * (PWM_COUNTERTOP as f32)) as u16;
     }
 
@@ -379,10 +385,10 @@ impl AppState {
       MidiEvent::NoteOn(key, _vel) => {
         self.notes[channel as usize] = Some(key);
         rprintln!(
-          "note on: {}, freq: {}, period: {}, ctop: {}",
+          "note on: {}, period: {} ({}), ctop: {}",
           key,
-          key_to_freq(key),
-          (1.0 / key_to_freq(key)) * SAMPLE_RATE as f32,
+          key_to_period(key),
+          key_to_period(key) * SAMPLE_RATE as f32,
           PWM_COUNTERTOP,
         );
       }
@@ -415,13 +421,13 @@ impl AppState {
 }
 
 // 261.625565 Hz = middle C
-const BASE_FREQ: f32 = 261.62558;
+const BASE_PERIOD: f32 = 1.0 / 261.62558;
 // EXP2_ONE_TWELFTH = 2^(1/12)
 const EXP2_ONE_TWELFTH: f32 = 1.0594631;
 
-fn key_to_freq(note: u8) -> f32 {
-  let note = note as i32 - 60;
-  BASE_FREQ * EXP2_ONE_TWELFTH.powi(note)
+fn key_to_period(note: u8) -> f32 {
+  let note = 60 - note as i32;
+  BASE_PERIOD * EXP2_ONE_TWELFTH.powi(note)
 }
 
 enum Waveform {
