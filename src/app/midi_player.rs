@@ -7,8 +7,7 @@ use cortex_m::{
 };
 use heapless::Vec;
 use microbit::{
-  board::Buttons,
-  hal::gpio::{Disconnected, Floating, Input, Level, Output, Pin, PushPull},
+  hal::gpio::{Input, Level, Output, Pin, PullUp, PushPull},
   pac::{
     interrupt,
     pwm0::{self, prescaler::PRESCALER_A, RegisterBlock},
@@ -16,6 +15,7 @@ use microbit::{
   },
   Board,
 };
+use micromath::F32Ext;
 use midly::{EventIter, TrackEvent, TrackEventKind, TrackIter};
 use rtt_target::rprintln;
 
@@ -28,7 +28,7 @@ static mut BUFFER2: Cell<[u16; 4]> = Cell::new([0; 4]);
 static mut BUFFER3: Cell<[u16; 4]> = Cell::new([0; 4]);
 
 // the prescaler sets the PWM clock frequency.
-const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_32;
+const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_8;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 
 static APP: Mutex<RefCell<Option<AppState>>> = Mutex::new(RefCell::new(None));
@@ -42,7 +42,7 @@ struct Peripherals {
   nvic: NVIC,
   speaker_pin: Pin<Output<PushPull>>,
   gpiote: GPIOTE,
-  buttons: [Pin<Input<Floating>>; 2],
+  buttons: [Pin<Input<PullUp>>; 2],
 }
 
 enum NextEvent {
@@ -51,7 +51,7 @@ enum NextEvent {
   Pending,
 }
 
-const MAX_TRACKS: usize = 3;
+const MAX_TRACKS: usize = 8;
 
 struct Tracks {
   // we support at most 8 tracks
@@ -71,7 +71,7 @@ impl Tracks {
       tracks.push(track).unwrap();
     }
 
-    rprintln!("tracks: {}", tracks.len());
+    rprintln!("num of tracks: {}", tracks.len());
 
     Self {
       tracks,
@@ -162,8 +162,8 @@ impl Peripherals {
         .degrade(),
       gpiote: board.GPIOTE,
       buttons: [
-        board.buttons.button_a.into_floating_input().degrade(),
-        board.buttons.button_b.into_floating_input().degrade(),
+        board.buttons.button_a.into_pullup_input().degrade(),
+        board.buttons.button_b.into_pullup_input().degrade(),
       ],
     }
   }
@@ -190,6 +190,13 @@ impl Peripherals {
 
   fn start_seq(&self, i: usize) {
     self.pwm(i).tasks_seqstart[0].write(|w| w.tasks_seqstart().trigger());
+  }
+
+  fn next_note(&self, i: usize) {
+    self
+      .pwm(i)
+      .tasks_nextstep
+      .write(|w| w.tasks_nextstep().trigger());
   }
 
   fn stop_seq(&self, i: usize) {
@@ -230,16 +237,19 @@ impl AppState {
   }
 
   fn start(&mut self) {
-    // start ticking
-    // self
-    //   .peripherals
-    //   .rtc
-    //   .tasks_start
-    //   .write(|w| w.tasks_start().trigger());
+    self
+      .peripherals
+      .rtc
+      .tasks_start
+      .write(|w| w.tasks_start().trigger());
+
+    for i in 0..4 {
+      self.update_seq(i);
+    }
   }
 
   fn update_ticks_per_sec(&mut self) {
-    self.ticks_per_sec = 72.0;
+    self.ticks_per_sec = 72.0 * 4.0;
     return;
 
     // while let Some(event) = self.next_event() {
@@ -274,9 +284,9 @@ impl AppState {
     match note {
       Some(key) => {
         buf.set(note_to_buf(key));
-        self.peripherals.start_seq(i);
       }
       None => {
+        buf.set(note_off_to_buff());
         self.peripherals.stop_seq(i);
       }
     };
@@ -288,6 +298,7 @@ impl AppState {
       .rtc
       .tasks_stop
       .write(|w| w.tasks_stop().trigger());
+
     for i in 0..4 {
       self.peripherals.stop_seq(i);
     }
@@ -312,8 +323,6 @@ impl AppState {
   fn handle_midi_event(&mut self, event: TrackEvent<'static>) {
     use midly::MidiMessage::{NoteOff, NoteOn};
     use TrackEventKind::Midi;
-
-    rprintln!("midi event: {:?}", event);
 
     match event.kind {
       Midi {
@@ -382,26 +391,16 @@ fn setup_timer(rtc: &RTC0, ticks_per_sec: f32) {
   rtc
     .prescaler
     .write(|w| unsafe { w.prescaler().bits(prescaler) });
+
   rtc.intenset.write(|w| w.tick().set());
 }
 
 fn setup_interrupt(nvic: &mut NVIC) {
   unsafe {
-    nvic.set_priority(interrupt::RTC0, 1);
-
-    // nvic.set_priority(interrupt::PWM0, 10);
-    // nvic.set_priority(interrupt::PWM1, 11);
-    // nvic.set_priority(interrupt::PWM2, 12);
-    // nvic.set_priority(interrupt::PWM3, 13);
-
-    // NVIC::unmask(interrupt::PWM0);
-    // NVIC::unmask(interrupt::PWM1);
-    // NVIC::unmask(interrupt::PWM2);
-    // NVIC::unmask(interrupt::PWM3);
-
+    nvic.set_priority(interrupt::RTC0, 10);
     NVIC::unmask(interrupt::RTC0);
 
-    nvic.set_priority(interrupt::GPIOTE, 9);
+    nvic.set_priority(interrupt::GPIOTE, 5);
     NVIC::unmask(interrupt::GPIOTE);
   }
 }
@@ -428,65 +427,55 @@ fn setup_pwm(pwm: &RegisterBlock, buffer: &Cell<[u16; 4]>, speaker_pin: u32) {
   // set pin
   pwm.psel.out[0].write(|w| unsafe { w.bits(speaker_pin) });
 
-  // enable
-  pwm.enable.write(|w| w.enable().enabled());
-
   // mode
-  pwm.mode.write(|w| w.updown().up_and_down());
+  pwm.mode.write(|w| w.updown().up());
 
   // pwm clock frequency
   pwm
     .prescaler
-    .write(|w| w.prescaler().bits(PWM_PRESCALER as u8));
+    .write(|w| w.prescaler().variant(PWM_PRESCALER));
 
   // set buffer
-  pwm
-    .seq0
-    .ptr
-    .write(|w| unsafe { w.bits(buffer.as_ptr() as u32) });
-  pwm.seq0.cnt.write(|w| unsafe { w.bits(4) });
+  let ptr = buffer.as_ptr() as u32;
+  pwm.seq0.ptr.write(|w| unsafe { w.bits(ptr) });
+  pwm.seq0.cnt.write(|w| unsafe { w.cnt().bits(4) });
+  pwm.seq0.refresh.write(|w| unsafe { w.cnt().bits(0x0) });
+  pwm.seq0.enddelay.write(|w| unsafe { w.bits(0) });
+
+  // pwm.loop_.write(|w| unsafe { w.bits(0) });
 
   // repeat a note indefinitely
-  pwm.seq0.refresh.write(|w| unsafe { w.bits(0xffffff) });
+  pwm.shorts.write(|w| w.loopsdone_seqstart0().enabled());
 
+  // play continuously
   pwm
     .decoder
-    .write(|w| w.load().wave_form().mode().refresh_count());
+    .write(|w| w.load().wave_form().mode().next_step());
 
-  // initialize to the lowest value
-  pwm.countertop.write(|w| unsafe { w.bits(0x3) });
-
-  // enable interrupts for end of sequence event
-  // pwm.intenset.write(|w| w.seqend0().set());
+  // enable
+  pwm.enable.write(|w| w.enable().enabled());
 }
 
 // 261.625565 Hz = middle C
-const BASE_FREQ: f32 = 261.625_58;
-const EXP2_ONE_TWELFTH: f32 = 1.059_463_1;
+const BASE_FREQ: f32 = 261.62558;
+// EXP2_ONE_TWELFTH = 2^(1/12)
+const EXP2_ONE_TWELFTH: f32 = 1.0594631;
 
 fn note_to_buf(key: u8) -> [u16; 4] {
-  // let freq = BASE_FREQ * ((key as f32 - 64.0) / 12.0).exp2(2.0);
-  // error: exp2 is not defined because there is no math lib.
-  let v = key as i16 - 60;
-  let mut multiplier = 1.0;
-  if v > 0 {
-    for _ in 0..v {
-      multiplier *= EXP2_ONE_TWELFTH;
-    }
-  } else {
-    for _ in 0..-v {
-      multiplier /= EXP2_ONE_TWELFTH;
-    }
-  }
+  let x: i32 = key as i32 - 60;
+  let freq = BASE_FREQ * EXP2_ONE_TWELFTH.powi(x);
 
-  let freq = BASE_FREQ * multiplier;
   let countertop = (PWM_CLOCK_FREQ as f32 / freq) as u16;
   let half_duty = countertop / 2;
   rprintln!("key: {}, freq: {}, countertop: {}", key, freq, countertop);
-  [half_duty, half_duty, half_duty, countertop]
+  [half_duty, 0, 0, countertop]
 }
 
-fn setup_buttons(gpiote: &GPIOTE, buttons: &[Pin<Input<Floating>>; 2]) {
+fn note_off_to_buff() -> [u16; 4] {
+  [0, 0, 0, 3]
+}
+
+fn setup_buttons(gpiote: &GPIOTE, buttons: &[Pin<Input<PullUp>>; 2]) {
   // enable gpio event for button a
   gpiote.config[0].write(|w| unsafe {
     w.mode()
