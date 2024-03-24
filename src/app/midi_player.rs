@@ -16,7 +16,7 @@ use microbit::{
   Board,
 };
 use micromath::F32Ext;
-use midly::{EventIter, TrackEvent, TrackEventKind, TrackIter};
+use midly::{EventIter, TrackEvent, TrackEventKind};
 use rtt_target::rprintln;
 
 // http://www.jsbach.net/midi/midi_artoffugue.html
@@ -45,27 +45,41 @@ struct Peripherals {
   buttons: [Pin<Input<PullUp>>; 2],
 }
 
-enum NextEvent {
-  Event(TrackEvent<'static>),
+enum MidiEvent {
+  NoteOn(u8, u8),
+  NoteOff(u8),
+}
+
+enum NextMidiEvent {
+  // channel, event
+  Event(u8, MidiEvent),
   Finished,
   Pending,
 }
 
 const MAX_TRACKS: usize = 8;
 
-struct Tracks {
+struct Midi {
   // we support at most 8 tracks
   tracks: Vec<EventIter<'static>, MAX_TRACKS>,
   next_event: [Option<TrackEvent<'static>>; MAX_TRACKS],
   ticks: [u32; MAX_TRACKS],
   next_track: Option<(usize, u32)>,
+  ticks_per_sec: usize,
 }
 
-impl Tracks {
-  fn new(iter: TrackIter<'static>) -> Self {
+impl Midi {
+  fn load(bytes: &'static [u8]) -> Self {
+    use midly::Timing;
+    let (header, midly_tracks) = midly::parse(bytes).unwrap();
+    let ticks_per_sec = match header.timing {
+      Timing::Metrical(n) => n.as_int() as usize,
+      Timing::Timecode(fps, n) => (fps.as_int() * n) as usize,
+    };
+
     let mut tracks = Vec::new();
     let mut next_event = [None; MAX_TRACKS];
-    for (i, track) in iter.take(MAX_TRACKS).enumerate() {
+    for (i, track) in midly_tracks.take(MAX_TRACKS).enumerate() {
       let mut track = track.unwrap();
       next_event[i] = track.next().map(|e| e.unwrap());
       tracks.push(track).unwrap();
@@ -73,12 +87,20 @@ impl Tracks {
 
     rprintln!("num of tracks: {}", tracks.len());
 
-    Self {
+    let mut this = Self {
       tracks,
       next_event,
       ticks: [0; MAX_TRACKS],
       next_track: None,
-    }
+      ticks_per_sec,
+    };
+
+    this.update_next_track();
+    this
+  }
+
+  fn ticks_per_sec(&self) -> usize {
+    self.ticks_per_sec as usize
   }
 
   fn update_next_track(&mut self) {
@@ -108,32 +130,46 @@ impl Tracks {
     Some(event)
   }
 
-  fn next_midi_event(&mut self, tick: u32) -> NextEvent {
+  fn next_midi_event(&mut self, tick: u32) -> NextMidiEvent {
+    use midly::MidiMessage;
+
     loop {
       let Some((_next_track, next_tick)) = self.next_track else {
-        return NextEvent::Finished;
+        return NextMidiEvent::Finished;
       };
 
       if next_tick > tick {
-        return NextEvent::Pending;
+        return NextMidiEvent::Pending;
       }
 
       let event = self.next_event().unwrap();
 
-      if let TrackEventKind::Midi { .. } = event.kind {
-        return NextEvent::Event(event);
+      if let TrackEventKind::Midi { message, channel } = event.kind {
+        use MidiEvent::{NoteOff, NoteOn};
+        let event = match message {
+          MidiMessage::NoteOn { key, vel } if vel.as_int() == 0 => {
+            NoteOff(key.as_int())
+          }
+          MidiMessage::NoteOn { key, vel } => {
+            NoteOn(key.as_int(), vel.as_int())
+          }
+
+          MidiMessage::NoteOff { key, .. } => NoteOff(key.as_int()),
+          _ => continue,
+        };
+
+        return NextMidiEvent::Event(channel.as_int(), event);
       }
     }
   }
 }
 
 struct AppState {
-  tracks: Tracks,
   notes: [Option<u8>; 4],
+  midi: Midi,
   peripherals: Peripherals,
   // midi tick
   tick: u32,
-  ticks_per_sec: f32,
 }
 
 pub fn play() -> ! {
@@ -188,17 +224,6 @@ impl Peripherals {
     }
   }
 
-  fn start_seq(&self, i: usize) {
-    self.pwm(i).tasks_seqstart[0].write(|w| w.tasks_seqstart().trigger());
-  }
-
-  fn next_note(&self, i: usize) {
-    self
-      .pwm(i)
-      .tasks_nextstep
-      .write(|w| w.tasks_nextstep().trigger());
-  }
-
   fn stop_seq(&self, i: usize) {
     self.pwm(i).tasks_stop.write(|w| w.tasks_stop().trigger());
   }
@@ -209,20 +234,17 @@ impl AppState {
     let board = Board::take().unwrap();
     let peripherals = Peripherals::take(board);
 
-    let (tracks, ticks_per_sec) = parse_midi();
+    let midi = Midi::load(MIDI_DATA);
 
     Self {
-      tracks,
-      ticks_per_sec,
       notes: [None; 4],
+      midi,
       peripherals,
       tick: 0,
     }
   }
 
   fn setup(&mut self) {
-    self.update_ticks_per_sec();
-
     for i in 0..4 {
       setup_pwm(
         self.peripherals.pwm(i),
@@ -231,7 +253,7 @@ impl AppState {
       );
     }
 
-    setup_timer(&self.peripherals.rtc, self.ticks_per_sec);
+    setup_timer(&self.peripherals.rtc, self.midi.ticks_per_sec());
     setup_interrupt(&mut self.peripherals.nvic);
     setup_buttons(&self.peripherals.gpiote, &self.peripherals.buttons);
   }
@@ -246,35 +268,6 @@ impl AppState {
     for i in 0..4 {
       self.update_seq(i);
     }
-  }
-
-  fn update_ticks_per_sec(&mut self) {
-    self.ticks_per_sec = 72.0 * 4.0;
-    return;
-
-    // while let Some(event) = self.next_event() {
-    //   if event.delta > 0 {
-    //     // self.pending_events.enqueue(event).unwrap();
-    //     break;
-    //   }
-
-    //   match event.kind {
-    //     TrackEventKind::Meta(MetaMessage::Tempo(n)) => {
-    //       rprintln!("tempo change: {}", n.as_int());
-    //       self.ticks_per_sec *= 1_000_000.0 / (n.as_int() as f32);
-    //     }
-    //     TrackEventKind::Meta(_) => {
-    //       // ignore other meta
-    //     }
-    //     TrackEventKind::Midi { .. } => {
-    //       // self.pending_events.enqueue(event).unwrap();
-    //       break;
-    //     }
-    //     _ => {
-    //       // ignore other event kinds
-    //     }
-    //   }
-    // }
   }
 
   fn update_seq(&self, i: usize) {
@@ -307,10 +300,12 @@ impl AppState {
   fn step(&mut self) {
     self.tick += 1;
     loop {
-      match self.tracks.next_midi_event(self.tick) {
-        NextEvent::Event(event) => self.handle_midi_event(event),
-        NextEvent::Pending => return,
-        NextEvent::Finished => {
+      match self.midi.next_midi_event(self.tick) {
+        NextMidiEvent::Event(channel, event) => {
+          self.handle_midi_event(channel, event)
+        }
+        NextMidiEvent::Pending => return,
+        NextMidiEvent::Finished => {
           rprintln!("playback finished");
           self.notes = [None; 4];
           self.stop();
@@ -320,73 +315,22 @@ impl AppState {
     }
   }
 
-  fn handle_midi_event(&mut self, event: TrackEvent<'static>) {
-    use midly::MidiMessage::{NoteOff, NoteOn};
-    use TrackEventKind::Midi;
+  fn handle_midi_event(&mut self, channel: u8, event: MidiEvent) {
+    assert!(channel < 4);
 
-    match event.kind {
-      Midi {
-        message: NoteOff { key, .. },
-        channel,
-      } => self.handle_note_off(channel.as_int(), key.as_int()),
-
-      Midi {
-        message: NoteOn { key, vel },
-        channel,
-      } if vel.as_int() == 0 => {
-        self.handle_note_off(channel.as_int(), key.as_int())
+    match event {
+      MidiEvent::NoteOn(key, _vel) => {
+        self.notes[channel as usize] = Some(key);
       }
-      Midi {
-        message: NoteOn { key, .. },
-        channel,
-      } => self.handle_note_on(channel.as_int(), key.as_int()),
-      _ => {}
+      MidiEvent::NoteOff(_key) => {
+        self.notes[channel as usize] = None;
+      }
     }
   }
-
-  fn handle_note_on(&mut self, channel: u8, key: u8) {
-    assert!(channel < 4);
-    rprintln!("channel: {}, key: {}", channel, key);
-    self.notes[channel as usize] = Some(key);
-    self.update_seq(channel as usize);
-  }
-
-  fn handle_note_off(&mut self, channel: u8, key: u8) {
-    assert!(channel < 4);
-    rprintln!("channel: {}, key: {}", channel, key);
-    self.notes[channel as usize] = None;
-    self.update_seq(channel as usize);
-  }
-
-  // fn handle_note_on(&mut self, channel: u8, key: u8) {
-  //   rprintln!("channel: {}, key: {}", channel, key);
-  //   for i in 0..4 {
-  //     if self.notes[i].is_none() {
-  //       self.notes[i] = Some(key);
-  //       self.update_seq(i);
-  //       return;
-  //     }
-  //   }
-
-  //   rprintln!("no free slot for note");
-  // }
-
-  // fn handle_note_off(&mut self, channel: u8, key: u8) {
-  //   rprintln!("channel: {}, key: {}", channel, key);
-  //   for i in 0..4 {
-  //     if self.notes[i] == Some(key) {
-  //       self.notes[i] = None;
-  //       self.update_seq(i);
-  //       return;
-  //     }
-  //   }
-
-  //   rprintln!("note off for non-existent note");
-  // }
 }
 
-fn setup_timer(rtc: &RTC0, ticks_per_sec: f32) {
-  let prescaler = ((32768.0 / ticks_per_sec) as u32 - 1) as u16;
+fn setup_timer(rtc: &RTC0, ticks_per_sec: usize) {
+  let prescaler = ((32768 / ticks_per_sec) as u32 - 1) as u16;
 
   rtc
     .prescaler
@@ -403,24 +347,6 @@ fn setup_interrupt(nvic: &mut NVIC) {
     nvic.set_priority(interrupt::GPIOTE, 5);
     NVIC::unmask(interrupt::GPIOTE);
   }
-}
-
-fn parse_midi() -> (Tracks, f32) {
-  use midly::Timing;
-  let (header, tracks) = midly::parse(MIDI_DATA).unwrap();
-
-  // we do not support multi-track formats
-  // assert_eq!(header.format, midly::Format::SingleTrack);
-
-  // ticks per second
-  let tick_per_sec = match header.timing {
-    Timing::Metrical(n) => n.as_int() as f32,
-    Timing::Timecode(fps, n) => fps.as_f32() * n as f32,
-  };
-
-  let mut tracks = Tracks::new(tracks);
-  tracks.update_next_track();
-  (tracks, tick_per_sec)
 }
 
 fn setup_pwm(pwm: &RegisterBlock, buffer: &Cell<[u16; 4]>, speaker_pin: u32) {
