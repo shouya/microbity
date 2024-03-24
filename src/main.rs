@@ -27,4 +27,6 @@ fn main() -> ! {
   app::midi_player::play();
   #[cfg(feature = "app_tone_generator")]
   app::tone_generator::play();
+  #[cfg(feature = "app_ble_temp")]
+  app::ble_temp::run();
 }

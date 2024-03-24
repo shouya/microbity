@@ -1,3 +1,5 @@
+#[cfg(feature = "app_ble_temp")]
+pub mod ble_temp;
 #[cfg(feature = "app_i2c_display")]
 pub mod i2c_display;
 #[cfg(feature = "app_midi_player")]
