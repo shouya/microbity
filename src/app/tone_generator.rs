@@ -15,11 +15,11 @@ use rtt_target::rprintln;
 use micromath::F32Ext;
 
 // the prescaler sets the PWM clock frequency.
-const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
+const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_4;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 const PWM_COUNTER_TOP: u16 = (PWM_CLOCK_FREQ / SAMPLE_RATE) as u16;
 
-const SAMPLE_RATE: u32 = 27399;
+const SAMPLE_RATE: u32 = 44000;
 const BUFFER_SIZE: usize = 64;
 
 static APP: Mutex<RefCell<Option<App>>> = Mutex::new(RefCell::new(None));
@@ -36,10 +36,16 @@ impl Peripherals {
   fn take(board: Board) -> Self {
     let pwm = board.PWM0;
     let nvic = board.NVIC;
-    let speaker_pin = board
-      .speaker_pin
-      .into_push_pull_output(Level::Low)
-      .degrade();
+
+    // the built-in speaker
+    // let speaker_pin = board
+    //   .speaker_pin
+    //   .into_push_pull_output(Level::Low)
+    //   .degrade();
+
+    // the speaker on io:bit extension board
+    let speaker_pin =
+      board.edge.e00.into_push_pull_output(Level::Low).degrade();
     let buttons = [
       board.buttons.button_a.into_pullup_input().degrade(),
       board.buttons.button_b.into_pullup_input().degrade(),
@@ -71,7 +77,7 @@ impl NoteGen {
   fn new() -> Self {
     Self {
       note: 60,
-      volume: 127,
+      volume: 20,
       offset: 0,
       buffers: [[0; BUFFER_SIZE]; 2],
     }
@@ -88,7 +94,7 @@ impl NoteGen {
   }
 
   fn fill_buffer(&mut self, buffer_idx: usize) {
-    let period = self.period();
+    let period = self.period().max(1);
     let vol = self.volume as f32 / 127.0;
     let buffer = &mut self.buffers[buffer_idx];
 
@@ -96,9 +102,10 @@ impl NoteGen {
     for i in 0..BUFFER_SIZE {
       let phase = ((self.offset + i) % period) as f32 / period as f32;
 
-      let amplitude = square_waveform(phase);
+      let sample = sine_waveform(phase) * vol;
+      let sample = (sample + 1.0) / 2.0 * (PWM_COUNTER_TOP as f32);
 
-      buffer[i] = (amplitude * vol * (PWM_COUNTER_TOP as f32)) as u16;
+      buffer[i] = sample as u16;
       // rprintln!("{} ({}): sin({}) -> {} ({})", i, phase, x, y, buffer[i]);
     }
 
@@ -321,24 +328,19 @@ fn PWM0() {
   });
 }
 
-// input: [0, 1], output: [0, 1]
+// input: [0, 1], output: [-1, 1]
 // allowed because f32::consts doesn't exist in no_std
 #[allow(unused)]
 #[allow(clippy::approx_constant)]
 fn sine_waveform(phase: f32) -> f32 {
-  ((2.0 * 3.14159 * phase).sin() + 1.0) * 0.5
-}
-
-#[allow(unused)]
-fn trig_waveform(phase: f32) -> f32 {
-  (0.5 - (phase - 0.5).abs()) * 2.0
+  (2.0 * 3.14159 * phase).sin()
 }
 
 #[allow(unused)]
 fn square_waveform(phase: f32) -> f32 {
   if phase < 0.5 {
-    0.1
+    -1.0
   } else {
-    0.9
+    1.0
   }
 }

@@ -195,10 +195,7 @@ impl Peripherals {
       pwm: board.PWM0,
       rtc: board.RTC0,
       nvic: board.NVIC,
-      speaker_pin: board
-        .speaker_pin
-        .into_push_pull_output(Level::Low)
-        .degrade(),
+      speaker_pin: board.edge.e00.into_push_pull_output(Level::Low).degrade(),
       gpiote: board.GPIOTE,
     }
   }

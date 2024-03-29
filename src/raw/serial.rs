@@ -24,6 +24,7 @@ impl<T: Instance> Serial<T> {
       microbit::hal::uarte::Baudrate::BAUD115200,
     );
 
+    #[allow(static_mut_refs)]
     let (tx, rx) = unsafe { uarte.split(&mut TX_BUF, &mut RX_BUF).unwrap() };
     Self { tx, rx }
   }

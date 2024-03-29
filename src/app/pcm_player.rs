@@ -24,7 +24,7 @@ use rtt_target::rprintln;
 const AUDIO_DATA: &[u8] = include_bytes!("../../assets/bad-apple.raw");
 // the sample rate of the audio data
 const DATA_SAMPLE_RATE: u32 = 7812;
-// the speaker's resonance frequency
+// <del>the speaker's resonance frequency</del>
 static TARGET_SAMPLE_RATE: AtomicU32 = AtomicU32::new(31250);
 
 // the prescaler sets the PWM clock frequency.
@@ -34,7 +34,7 @@ const PWM_PRESCALER: PRESCALER_A = PRESCALER_A::DIV_1;
 const PWM_CLOCK_FREQ: u32 = 1 << (24 - (PWM_PRESCALER as u8));
 
 // each sample will be played REFRESH+1 times. This smooths out the sound.
-static PWM_REFRESH: AtomicU32 = AtomicU32::new(0);
+static PWM_REFRESH: AtomicU32 = AtomicU32::new(2);
 
 // make sure each sample to have duration TARGET_SAMPLE_RATE^-1
 // Since: sample duration = (PWM_CLOCK_FREQ / (PWM_COUNTERTOP * (1 + REFRESH)))^-1 = TARGET_SAMPLE_RATE^-1
@@ -92,10 +92,12 @@ pub fn play() -> ! {
 fn play_sound_data() -> ! {
   let mut board = Board::take().unwrap();
 
-  let speaker_pin = board
-    .speaker_pin
-    .into_push_pull_output(Level::Low)
-    .degrade();
+  let speaker_pin = board.edge.e00.into_push_pull_output(Level::Low).degrade();
+
+  // let speaker_pin = board
+  //   .speaker_pin
+  //   .into_push_pull_output(Level::Low)
+  //   .degrade();
 
   let pwm = board.PWM0;
 
@@ -242,14 +244,14 @@ fn PWM0() {
   free(|cs| {
     let pwm = PWM.borrow(cs).get().unwrap();
     if pwm.events_seqend[0].read().bits() != 0 {
-      pwm.events_seqend[0].write(|w| w.events_seqend().clear_bit());
       play_seq(1, pwm);
+      pwm.events_seqend[0].write(|w| w.events_seqend().clear_bit());
       fill_next_buffer(0, cs);
     }
 
     if pwm.events_seqend[1].read().bits() != 0 {
-      pwm.events_seqend[1].write(|w| w.events_seqend().clear_bit());
       play_seq(0, pwm);
+      pwm.events_seqend[1].write(|w| w.events_seqend().clear_bit());
       fill_next_buffer(1, cs);
     }
   });

@@ -28,7 +28,7 @@ embassy-time = "0.3.0"
 nrf-softdevice = { version = "0.1.0", features = ["ble-peripheral", "critical-section-impl", "s113", "nrf52833"] }
 
 [features]
-default = ["app_ble_temp"]
+default = ["app_pcm_player"]
 app_temp = []
 app_volume = []
 app_playground = []
@@ -39,3 +39,6 @@ app_tone_generator = ["dep:micromath"]
 app_ble_temp = ["softdevice"]
 
 softdevice = []
+
+[profile.dev]
+opt-level = "2"
