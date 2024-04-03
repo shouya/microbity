@@ -1,6 +1,8 @@
 use defmt::println;
 use static_cell::StaticCell;
 
+use nrf_softdevice as _; // critical section definition
+
 use embassy_executor::{task, Executor, Spawner};
 use embassy_time::Timer;
 

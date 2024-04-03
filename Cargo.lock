@@ -275,6 +275,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eca4a9380d03e61063067b8239f67d2fa9f108ede7c46b4273804f6b79e59a1d"
 dependencies = [
+ "defmt",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
@@ -294,6 +295,7 @@ checksum = "ec648daedd2143466eff4b3e8002024f9f6c1de4ab7666bb679688752624c925"
 dependencies = [
  "cortex-m",
  "critical-section 1.1.2",
+ "defmt",
  "document-features",
  "embassy-executor-macros",
  "embassy-time-driver",
@@ -326,6 +328,7 @@ checksum = "a0ec47cf8bab914018d4bd2b4f0aaeb46e4f52ab1e7985df88aeef2c6eda5aed"
 dependencies = [
  "cortex-m",
  "critical-section 1.1.2",
+ "defmt",
  "num-traits",
 ]
 
@@ -339,6 +342,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "critical-section 1.1.2",
+ "defmt",
  "document-features",
  "embassy-embedded-hal",
  "embassy-hal-internal",
@@ -374,6 +378,7 @@ checksum = "dd938f25c0798db4280fcd8026bf4c2f48789aebf8f77b6e5cf8a7693ba114ec"
 dependencies = [
  "cfg-if",
  "critical-section 1.1.2",
+ "defmt",
  "embedded-io-async",
  "futures-util",
  "heapless 0.8.0",
@@ -417,12 +422,24 @@ name = "embassy-usb-driver"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fc247028eae04174b6635104a35b1ed336aabef4654f5e87a8f32327d231970"
+dependencies = [
+ "defmt",
+]
 
 [[package]]
 name = "embedded-dma"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46c8c02e4347a0267ca60813c952017f4c5948c232474c6010a381a337f1bda4"
+dependencies = [
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "embedded-dma"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "994f7e5b5cb23521c22304927195f236813053eb9c065dd2226a32ba64695446"
 dependencies = [
  "stable_deref_trait",
 ]
@@ -667,7 +684,7 @@ version = "0.13.0"
 source = "git+https://github.com/nrf-rs/microbit?branch=main#7726c24603291f44eafc96a181906893cd2a630d"
 dependencies = [
  "embedded-hal 0.2.7",
- "nrf52833-hal",
+ "nrf52833-hal 0.14.1",
  "tiny-led-matrix",
 ]
 
@@ -697,6 +714,7 @@ dependencies = [
  "micromath",
  "midly",
  "nrf-softdevice",
+ "nrf52833-hal 0.16.1",
  "panic-probe",
  "static_cell",
 ]
@@ -737,13 +755,33 @@ dependencies = [
  "cast",
  "cfg-if",
  "cortex-m",
- "embedded-dma",
+ "embedded-dma 0.1.2",
  "embedded-hal 0.2.7",
  "embedded-storage 0.2.0",
  "fixed",
  "nb 1.1.0",
- "nrf-usbd",
+ "nrf-usbd 0.1.1",
  "nrf52833-pac 0.10.1",
+ "rand_core",
+ "void",
+]
+
+[[package]]
+name = "nrf-hal-common"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ea48ed7f0843fe6ec5aac0c42701e9194adfa1ee82ce6d028d64e5f68542be4"
+dependencies = [
+ "cast",
+ "cfg-if",
+ "cortex-m",
+ "embedded-dma 0.2.0",
+ "embedded-hal 0.2.7",
+ "embedded-storage 0.3.1",
+ "fixed",
+ "nb 1.1.0",
+ "nrf-usbd 0.2.0",
+ "nrf52833-pac 0.12.2",
  "rand_core",
  "void",
 ]
@@ -799,6 +837,18 @@ dependencies = [
  "bare-metal 1.0.0",
  "cortex-m",
  "critical-section 0.2.8",
+ "usb-device",
+ "vcell",
+]
+
+[[package]]
+name = "nrf-usbd"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66b2907c0b3ec4d264981c1fc5a2321d51c463d5a63d386e573f00e84d5495e6"
+dependencies = [
+ "cortex-m",
+ "critical-section 1.1.2",
  "usb-device",
  "vcell",
 ]
@@ -865,8 +915,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87f76d269c9a239ffe24edaa5ee0972b102c04e898b464e3e9a12ab0eacd5f76"
 dependencies = [
  "embedded-hal 0.2.7",
- "nrf-hal-common",
+ "nrf-hal-common 0.14.1",
  "nrf52833-pac 0.10.1",
+]
+
+[[package]]
+name = "nrf52833-hal"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1965a8f3bec7cdf3753128a09fac5019d8eb212a8fcff58014368db148daf06"
+dependencies = [
+ "embedded-hal 0.2.7",
+ "nrf-hal-common 0.16.1",
+ "nrf52833-pac 0.12.2",
 ]
 
 [[package]]

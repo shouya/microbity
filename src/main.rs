@@ -8,6 +8,8 @@ use cortex_m_rt::entry;
 use defmt_rtt as _;
 // panicking behavior
 use panic_probe as _;
+// memory layout
+use nrf52833_hal as _;
 
 mod app;
 mod raw;
