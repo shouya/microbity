@@ -3,16 +3,17 @@
 #![no_std]
 
 use cortex_m_rt::entry;
-use panic_rtt_target as _;
-use rtt_target::rtt_init_print;
+
+// global logger
+use defmt_rtt as _;
+// panicking behavior
+use panic_probe as _;
 
 mod app;
 mod raw;
 
 #[entry]
 fn main() -> ! {
-  rtt_init_print!();
-
   #[cfg(feature = "app_playground")]
   app::playground::playground();
   #[cfg(feature = "app_volume")]
