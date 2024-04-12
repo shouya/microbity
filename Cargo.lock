@@ -392,6 +392,7 @@ checksum = "a9c844070d9f80dc66ee739299183312baee2e1cdeb6e90b4ea2af44f4676da5"
 dependencies = [
  "cfg-if",
  "critical-section 1.1.2",
+ "defmt",
  "document-features",
  "embassy-time-driver",
  "embassy-time-queue-driver",
