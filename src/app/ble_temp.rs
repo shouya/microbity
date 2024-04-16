@@ -2,16 +2,15 @@ use core::mem::transmute;
 
 use defmt::{dbg, info};
 use embassy_time::{Duration, Timer};
+use fixed::types::I30F2;
 use nrf_softdevice::ble::Connection;
+use nrf_softdevice::raw::sd_temp_get;
+use nrf_softdevice::RawError;
 use static_cell::StaticCell;
 
-use embassy_nrf::{self as _}; // time driver
+use embassy_nrf::{self as _, Peripherals}; // time driver
 
-use embassy_nrf::{
-  bind_interrupts,
-  interrupt::Priority,
-  temp::{self, Temp},
-};
+use embassy_nrf::interrupt::Priority;
 
 use nrf_softdevice::{
   self as _,
@@ -29,16 +28,18 @@ use nrf_softdevice::{
 use embassy_executor::{task, Executor, Spawner};
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+static SERVER: StaticCell<Server> = StaticCell::new();
 static mut CONNECTION: Option<u16> = None;
 
 pub fn run() -> ! {
   let executor = EXECUTOR.init(Executor::new());
+
   let mut config = embassy_nrf::config::Config::default();
   config.gpiote_interrupt_priority = Priority::P2;
   config.time_interrupt_priority = Priority::P2;
-  embassy_nrf::init(config);
+  let peripherals = embassy_nrf::init(config);
 
-  executor.run(|spawner| spawner.must_spawn(main(spawner)))
+  executor.run(|spawner| spawner.must_spawn(main(spawner, peripherals)))
 }
 
 #[task]
@@ -114,18 +115,19 @@ async fn handle_connection(softdevice: &Softdevice, server: &Server) {
   .await;
 }
 
+// TEMP peripheral was taken by the softdevice
+// See: https://infocenter.nordicsemi.com/index.jsp?topic=%2Fsds_s132%2FSDS%2Fs1xx%2Fsd_resource_reqs%2Fhw_block_interrupt_vector.html
 #[task]
 async fn monitor_temp(server: &'static Server) {
-  let config = embassy_nrf::config::Config::default();
-  let peripherals = embassy_nrf::init(config);
-  bind_interrupts!(struct Irqs {
-    TEMP => temp::InterruptHandler;
-  });
-  let mut temp = Temp::new(peripherals.TEMP, Irqs);
-
   loop {
-    let readout = temp.read().await.to_bits() as i16;
-    let gatt_val = fixed_temp_gatt_value(readout, 2);
+    let mut fixed = 0;
+    let ret = unsafe { sd_temp_get(&mut fixed) };
+    let readout: i32 = (I30F2::from_bits(fixed) * 100).to_num();
+    if let Err(e) = RawError::convert(ret) {
+      dbg!(e);
+      continue;
+    };
+    let gatt_val = fixed_temp_gatt_value(readout as i16, 2);
     server.temp.temp_set(&gatt_val).unwrap();
 
     if let Some(handle) = unsafe { CONNECTION.as_ref() } {
@@ -139,22 +141,16 @@ async fn monitor_temp(server: &'static Server) {
 }
 
 #[task]
-async fn main(spawner: Spawner) {
+async fn main(spawner: Spawner, _peripherals: Peripherals) {
   let softdevice = setup_softdevice();
-  let server = Server::new(softdevice).unwrap();
+  let server = SERVER.init(Server::new(softdevice).unwrap());
 
+  spawner.spawn(monitor_temp(server)).unwrap();
   spawner.spawn(softdevice_task(softdevice)).unwrap();
-
-  server
-    .temp
-    .temp_set(
-      &fixed_temp_gatt_value(-1337, 2), // -13.37
-    )
-    .unwrap();
 
   loop {
     info!("Advertising");
-    handle_connection(softdevice, &server).await;
+    handle_connection(softdevice, server).await;
   }
 }
 
