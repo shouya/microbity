@@ -229,6 +229,11 @@ Peripherals:
 - [[https://www.digikey.com/en/products/detail/knowles/SPU0410LR5H-QB/2420974][SPU0410LR5H-QB Knowles | Audio Products | DigiKey]] (microphone)
 - [[https://www.digikey.com/en/htmldatasheets/production/5584767/0/0/1/107020109][JIANGSU HUANENG MLT-8530]] (speaker)
 
+Bluetooth specification:
+
+- [[https://www.bluetooth.com/specifications/assigned-numbers/][Assigned Numbers | Bluetooth® Technology Website]]
+- [[https://www.bluetooth.com/specifications/gss/][GATT Specification Supplement | Bluetooth® Technology Website]]
+
 * Useful links
 
 - [[https://www.digikey.com/en/resources/conversion-calculators/conversion-calculator-low-pass-and-high-pass-filter][RC, RL, LC Passive Filter Calculator | DigiKey Electronics]] (for calculating the cut-off frequency of the speaker)
